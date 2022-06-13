@@ -101,19 +101,45 @@ export class ToWorker {
     this.reqs = {};
   }
 
-  get worker(): Worker {
+  async worker(): Promise<Worker> {
     if (!this._worker) {
-      const WorkerCtor = isNode() ? NodeWorker : Worker;
-      let isModule = true;
-      try {
-        import.meta;
-      } catch (_) {
-        isModule = false;
+      let path = WORKER_PATH;
+      if (
+        !isNode() &&
+        /^http:|https:/.test(WORKER_PATH) &&
+        !WORKER_PATH.startsWith(location.origin)
+      ) {
+        // Support cross-origin loading.
+        const blob = await (await fetch(WORKER_PATH)).blob();
+        path = URL.createObjectURL(blob);
       }
-      this._worker = new WorkerCtor(
-        WORKER_PATH,
-        isModule ? { type: "module" } : undefined
-      ) as unknown as Worker;
+
+      if (isNode()) {
+        const worker_threads = await import("worker_threads");
+        const pathMod = await import("path");
+        // @ts-ignore
+        const sep = pathMod["sep"];
+        path =
+          path
+            .replace(`file:${sep}${sep}`, "")
+            .split(sep)
+            .slice(0, -2)
+            .join(sep) + `${sep}umd${sep}worker.cjs`;
+        this._worker = new NodeWorker(
+          new worker_threads["Worker"](path)
+        ) as unknown as Worker;
+      } else {
+        let isModule = true;
+        try {
+          import.meta;
+        } catch (_) {
+          isModule = false;
+        }
+        this._worker = new Worker(
+          path,
+          isModule ? { type: "module" } : undefined
+        );
+      }
       this._worker!.addEventListener("message", this.onMessage.bind(this));
     }
     return this._worker!;
@@ -147,7 +173,7 @@ export class ToWorker {
 
   send(msg: Message) {
     const toWorkerMsg: ToWorkerMessage = { msg };
-    this.worker.postMessage(toWorkerMsg);
+    this.worker().then((worker: Worker) => worker.postMessage(toWorkerMsg));
   }
 
   req<T>(msg: Message, transfers?: any[]): Promise<T> {
@@ -155,8 +181,10 @@ export class ToWorker {
     const deferred: Deferred<Message> = new Deferred();
     this.reqs[id] = deferred;
     const toWorkerMsg: ToWorkerMessage = { msg, req: id };
-    // @ts-ignore
-    this.worker.postMessage(toWorkerMsg, transfers);
+    this.worker().then((worker: Worker) =>
+      // @ts-ignore
+      worker.postMessage(toWorkerMsg, transfers)
+    );
     return deferred.promise as unknown as Promise<T>;
   }
 
@@ -212,37 +240,22 @@ class Deferred<T> {
 }
 
 class NodeWorker {
-  worker: Deferred<any>;
+  worker: any;
 
-  constructor(path: string, _: any) {
-    this.worker = new Deferred();
-    Promise.all([import("worker_threads"), import("path")]).then(
-      (mods: any) => {
-        // @ts-ignore
-        const sep = mods[1]["sep"];
-        path =
-          path
-            .replace(`file:${sep}${sep}`, "")
-            .split(sep)
-            .slice(0, -2)
-            .join(sep) + `${sep}umd${sep}worker.cjs`;
-        this.worker.resolve(new mods[0]["Worker"](path));
-      }
-    );
+  constructor(worker: any) {
+    this.worker = worker;
   }
 
   addEventListener(event: string, listener: any) {
-    this.worker.promise.then((worker: any) =>
-      worker["on"](event, wrapNodeListener(listener))
-    );
+    this.worker["on"](event, wrapNodeListener(listener));
   }
 
   postMessage(msg: any) {
-    this.worker.promise.then((worker: any) => worker["postMessage"](msg));
+    this.worker["postMessage"](msg);
   }
 
   terminate() {
-    this.worker.promise.then((worker: any) => worker["terminate"]());
+    this.worker["terminate"]();
   }
 }
 
