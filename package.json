@@ -1,14 +1,16 @@
 {
   "name": "@jspawn/jspawn",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "a subprocess API for WebAssembly programs",
+  "main": "umd/jspawn.js",
+  "module": "esm/jspawn.mjs",
+  "types": "umd/jspawn.d.ts",
   "scripts": {
     "test:browser": "./node_modules/karma/bin/karma start",
     "test:node": "./node_modules/mocha/bin/mocha.js --node-option experimental-wasm-bigint --node-option experimental-wasi-unstable-preview1 tests/node",
     "test": "npm run test:node && npm run test:browser",
     "build": "./node_modules/rollup/dist/bin/rollup -c"
   },
-  "author": "",
   "license": "(MIT OR Apache-2.0)",
   "devDependencies": {
     "@jspawn/imagecli-wasm": "^0.1.0",

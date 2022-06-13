@@ -26,7 +26,7 @@ const output = await subprocess.run(
   // Can be installed via `npm install --save @jspawn/imagemagick-wasm`
   "node_modules/@jspawn/imagemagick-wasm/magick.wasm",
   // Create a blank PNG.
-  ["-size", "100x100", "xc:white", "blank.png"]
+  ["-size", "100x100", "xc:blue", "blank.png"]
 );
 console.log(output);
 /*
@@ -48,12 +48,12 @@ node --experimental-wasm-bigint --experimental-wasi-unstable-preview1 index.mjs
 ### Browser
 
 ```javascript
-import { subprocess, fs } from "https://unpkg.com/@jspawn/jspawn/jspawn.mjs";
+import { subprocess, fs } from "https://unpkg.com/@jspawn/jspawn/esm/jspawn.mjs";
 
 const output = await subprocess.run(
   "https://unpkg.com/@jspawn/imagemagick-wasm/magick.wasm",
   // Create a blank PNG.
-  ["-size", "100x100", "xc:white", "blank.png"]
+  ["-size", "100x100", "xc:blue", "blank.png"]
 );
 
 console.log(output);

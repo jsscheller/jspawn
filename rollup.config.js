@@ -31,8 +31,13 @@ require("rimraf").sync("dist");
 
 export default [
   { input: "jspawn", format: "esm", minify: false },
+  { input: "jspawn", format: "esm", minify: true },
   { input: "jspawn", format: "esm", minify: false, ext: "mjs" },
+  { input: "jspawn", format: "esm", minify: true, ext: "mjs" },
   { input: "jspawn", format: "umd", minify: false },
+  { input: "jspawn", format: "umd", minify: true },
   { input: "jspawn", format: "iife", minify: false },
+  { input: "jspawn", format: "iife", minify: true },
   { input: "worker", format: "umd", minify: false, ext: "cjs" },
+  { input: "worker", format: "umd", minify: true, ext: "cjs" },
 ].map(config);
