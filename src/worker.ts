@@ -49,9 +49,13 @@ async function subprocessRun(
   nodeShim: NodeShim
 ) {
   let mod: WebAssembly.Module;
+  let binaryPath = msg.program;
   if (isNode()) {
-    const binaryPath = await resolveBinaryPath(msg.program, msg.wasmPath);
-    if (!binaryPath) {
+    const resolvedBinaryPath = await resolveBinaryPath(
+      msg.program,
+      msg.wasmPath
+    );
+    if (!resolvedBinaryPath) {
       return fromWorker.pub(
         msg.topic,
         {
@@ -61,12 +65,13 @@ async function subprocessRun(
         true
       );
     }
+    binaryPath = resolvedBinaryPath;
     // @ts-ignore
     const buf = await require("fs/promises")["readFile"](binaryPath!);
     // @ts-ignore
     mod = await WebAssembly.compile(buf);
   } else {
-    mod = await WebAssembly.compileStreaming(fetch(msg.program));
+    mod = await WebAssembly.compileStreaming(fetch(binaryPath));
   }
 
   const stdout = new Stdout((buf: Uint8Array) => {
@@ -89,7 +94,7 @@ async function subprocessRun(
     )
   ) {
     // Assuming this is Emscripten if no WASI exports are found.
-    const jsPath = msg.program.replace(/wasm$/, "js");
+    const jsPath = binaryPath.replace(/wasm$/, "js");
     let Module: any;
     if (isNode()) {
       // @ts-ignore
@@ -119,7 +124,7 @@ async function subprocessRun(
     const emMod = await Module({
       ["noInitialRun"]: true,
       ["noFSInit"]: true,
-      ["locateFile"]: () => msg.program,
+      ["locateFile"]: () => binaryPath,
       ["preRun"]: (mod: any) => {
         Object.assign(mod["ENV"], msg.env);
       },

@@ -43,4 +43,19 @@ describe("node ESM tests", function () {
     const outPNG = await fs.readFile("blank_wasi_resolved.png");
     expect(outPNG.length).to.not.equal(0);
   });
+
+  it("resolves the correct path to WASM file (Emscripten)", async function () {
+    const output = await subprocess.run("magick", [
+      "-size",
+      "100x100",
+      "xc:white",
+      "blank_em_resolved.png",
+    ]);
+    expect(output.exitCode).to.equal(0);
+    expect(output.stdout).to.equal("");
+    expect(output.stderr).to.equal("");
+
+    const outPNG = await fs.readFile("blank_em_resolved.png");
+    expect(outPNG.length).to.not.equal(0);
+  });
 });
