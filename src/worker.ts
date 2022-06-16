@@ -50,12 +50,23 @@ async function subprocessRun(
 ) {
   let mod: WebAssembly.Module;
   if (isNode()) {
+    const binaryPath = await resolveBinaryPath(msg.program, msg.wasmPath);
+    if (!binaryPath) {
+      return fromWorker.pub(
+        msg.topic,
+        {
+          type: MessageType.SubprocessRunError,
+          message: `unable to resolve WASM file for program: ${msg.program}`,
+        },
+        true
+      );
+    }
     // @ts-ignore
-    const buf = await require("fs/promises")["readFile"](msg.wasmBinary);
+    const buf = await require("fs/promises")["readFile"](binaryPath!);
     // @ts-ignore
     mod = await WebAssembly.compile(buf);
   } else {
-    mod = await WebAssembly.compileStreaming(fetch(msg.wasmBinary));
+    mod = await WebAssembly.compileStreaming(fetch(msg.program));
   }
 
   const stdout = new Stdout((buf: Uint8Array) => {
@@ -78,7 +89,7 @@ async function subprocessRun(
     )
   ) {
     // Assuming this is Emscripten if no WASI exports are found.
-    const jsPath = msg.wasmBinary.replace(/wasm$/, "js");
+    const jsPath = msg.program.replace(/wasm$/, "js");
     let Module: any;
     if (isNode()) {
       // @ts-ignore
@@ -108,7 +119,7 @@ async function subprocessRun(
     const emMod = await Module({
       ["noInitialRun"]: true,
       ["noFSInit"]: true,
-      ["locateFile"]: () => msg.wasmBinary,
+      ["locateFile"]: () => msg.program,
       ["preRun"]: (mod: any) => {
         Object.assign(mod["ENV"], msg.env);
       },
@@ -123,7 +134,7 @@ async function subprocessRun(
 
     exitCode = emMod["callMain"](msg.args);
   } else {
-    const args = [msg.wasmBinary].concat(msg.args);
+    const args = [msg.program].concat(msg.args);
 
     let wasiImport: any;
     let nodeWasi: any;
@@ -160,6 +171,69 @@ async function subprocessRun(
     },
     true
   );
+}
+
+type BinaryResolveCache = {
+  wasmPath?: string[];
+  resolutions: { [k: string]: string };
+};
+
+const BINARY_RESOLVE_CACHE: BinaryResolveCache = {
+  resolutions: {},
+};
+
+async function resolveBinaryPath(
+  program: string,
+  wasmPath: string[]
+): Promise<string | undefined> {
+  // @ts-ignore
+  const path = require("path");
+  const sep = path["sep"];
+  const wasmExt = ".wasm";
+
+  if (program.includes(sep) || program.endsWith(wasmExt)) {
+    return program;
+  }
+
+  program += wasmExt;
+
+  const cached = BINARY_RESOLVE_CACHE.resolutions[program];
+  if (cached) {
+    return cached;
+  }
+
+  // @ts-ignore
+  const fs = require("fs/promises");
+
+  if (!BINARY_RESOLVE_CACHE.wasmPath) {
+    BINARY_RESOLVE_CACHE.wasmPath = [];
+
+    const jspawnPath = path["join"]("node_modules", "@jspawn");
+    let ents: string[] | undefined;
+    try {
+      ents = await fs["readdir"](jspawnPath);
+    } catch (_) {}
+    if (ents) {
+      for (const ent of ents) {
+        if (ent !== "jspawn") {
+          BINARY_RESOLVE_CACHE.wasmPath!.push(path.join(jspawnPath, ent));
+        }
+      }
+    }
+  }
+
+  const programWithoutExt = program.replace(wasmExt, "");
+  for (const testPath of wasmPath.concat(BINARY_RESOLVE_CACHE.wasmPath)) {
+    if (testPath.split(sep).pop()!.includes(programWithoutExt)) {
+      try {
+        const resolved = path["join"](testPath, program);
+        await fs["stat"](resolved);
+        return (BINARY_RESOLVE_CACHE.resolutions[program] = resolved);
+      } catch (_) {}
+    }
+  }
+
+  return undefined;
 }
 
 async function fsReqeust(req: number, msg: FSRequest, ctx: Context) {

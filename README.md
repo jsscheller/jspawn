@@ -22,20 +22,16 @@ npm install --save @jspawn/jspawn
 // Or `const { subprocess } = require("@jspawn/jspawn");`
 import { subprocess } from "@jspawn/jspawn";
 
+// WASM/binary resolution happens automatically in node when the first argument isn't a path -
+// more specifically, it doesn't contain a path-separator and doesn't end with `.wasm`.
 const output = await subprocess.run(
-  // Can be installed via `npm install --save @jspawn/imagemagick-wasm`
-  "node_modules/@jspawn/imagemagick-wasm/magick.wasm",
+  // Assumes `@jspawn/imagemagick-wasm` is installed.
+  // `npm install --save @jspawn/imagemagick-wasm`
+  "magick",
   // Create a blank PNG.
   ["-size", "100x100", "xc:blue", "blank.png"]
 );
-console.log(output);
-/*
-{
-  exitCode: 0,
-  stdout: "",
-  stderr: ""
-}
-*/
+console.log(output); // { exitCode: 0, stdout: "", stderr: "" }
 ```
 
 Run with:
@@ -51,19 +47,13 @@ node --experimental-wasm-bigint --experimental-wasi-unstable-preview1 index.mjs
 import { subprocess, fs } from "https://unpkg.com/@jspawn/jspawn/esm/jspawn.mjs";
 
 const output = await subprocess.run(
+  // Full path to a WASM file - no automatic resolution in the browser.
   "https://unpkg.com/@jspawn/imagemagick-wasm/magick.wasm",
   // Create a blank PNG.
   ["-size", "100x100", "xc:blue", "blank.png"]
 );
 
-console.log(output);
-/*
-{
-  exitCode: 0,
-  stdout: "",
-  stderr: ""
-}
-*/
+console.log(output); // { exitCode: 0, stdout: "", stderr: "" }
 
 // The file system lives in memory for browser environments.
 // Access it using the `fs` module.

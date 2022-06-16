@@ -5,6 +5,7 @@ export type Message =
   | SubprocessRunStdout
   | SubprocessRunStderr
   | SubprocessRunExitCode
+  | SubprocessRunError
   | FSRequest
   | FSResponse;
 
@@ -13,6 +14,7 @@ export const enum MessageType {
   SubprocessRunStdout,
   SubprocessRunStderr,
   SubprocessRunExitCode,
+  SubprocessRunError,
   FSRequest,
   FSResponse,
 }
@@ -20,9 +22,10 @@ export const enum MessageType {
 export type SubprocessRun = {
   type: MessageType.SubprocessRun;
   topic: number;
-  wasmBinary: string;
+  program: string;
   args: string[];
   env: { [k: string]: string };
+  wasmPath: string[];
 };
 
 export type SubprocessRunStdout = {
@@ -38,6 +41,11 @@ export type SubprocessRunStderr = {
 export type SubprocessRunExitCode = {
   type: MessageType.SubprocessRunExitCode;
   exitCode: number;
+};
+
+export type SubprocessRunError = {
+  type: MessageType.SubprocessRunError;
+  message: string;
 };
 
 export const enum FSRequestType {

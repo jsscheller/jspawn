@@ -28,4 +28,19 @@ describe("node ESM tests", function () {
     const outPNG = await fs.readFile("blank_wasi.png");
     expect(outPNG.length).to.not.equal(0);
   });
+
+  it("resolves the correct path to WASM file", async function () {
+    const output = await subprocess.run("imagecli", [
+      "-o",
+      "blank_wasi_resolved.png",
+      "-p",
+      "new 100 100 (255, 255, 0)",
+    ]);
+    expect(output.exitCode).to.equal(0);
+    expect(output.stdout).to.equal("");
+    expect(output.stderr).to.equal("");
+
+    const outPNG = await fs.readFile("blank_wasi_resolved.png");
+    expect(outPNG.length).to.not.equal(0);
+  });
 });

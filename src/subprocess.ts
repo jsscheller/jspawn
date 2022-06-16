@@ -1,6 +1,12 @@
 import { toWorker, ToWorker, Message, MessageType } from "./workerChannel";
 import { isNode } from "./utils";
 
+let WASM_PATH: string[] = [];
+
+export function pushPath(...args: string[]) {
+  WASM_PATH = WASM_PATH.concat(args);
+}
+
 declare type Options = {
   env?: { [k: string]: string };
 };
@@ -12,7 +18,7 @@ declare type Output = {
 };
 
 export async function run(
-  wasmBinary: string,
+  program: string,
   args: string[],
   opts: Options = {}
 ): Promise<Output> {
@@ -24,9 +30,10 @@ export async function run(
   channel.send({
     type: MessageType.SubprocessRun,
     topic,
-    wasmBinary,
+    program,
     args,
     env: opts.env || {},
+    wasmPath: WASM_PATH,
   });
   let output = {
     stdout: "",
@@ -34,6 +41,7 @@ export async function run(
     exitCode: -1,
   };
   const decoder = new TextDecoder();
+  let errMsg: string | undefined;
   await channel.sub(topic, (msg: Message) => {
     switch (msg.type) {
       case MessageType.SubprocessRunStdout:
@@ -47,11 +55,18 @@ export async function run(
       case MessageType.SubprocessRunExitCode:
         output.exitCode = msg.exitCode;
         break;
+      case MessageType.SubprocessRunError:
+        errMsg = msg.message;
+        break;
     }
   });
 
   if (isNode()) {
     channel.terminateWorker();
+  }
+
+  if (errMsg) {
+    throw new Error(errMsg);
   }
 
   return output;
