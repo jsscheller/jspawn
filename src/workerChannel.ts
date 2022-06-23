@@ -1,4 +1,5 @@
 import { isMainThread, isNode } from "./utils";
+import { handleMessage } from "./worker";
 
 export type Message =
   | SubprocessRun
@@ -97,6 +98,8 @@ if (isMainThread()) {
   }
 }
 
+let SINGLE_THREAD: SingleThreadWorker | undefined;
+
 export class ToWorker {
   _worker?: Worker;
   nextID: number;
@@ -143,10 +146,12 @@ export class ToWorker {
         } catch (_) {
           isModule = false;
         }
-        this._worker = new Worker(
-          path,
-          isModule ? { type: "module" } : undefined
-        );
+        this._worker = globalThis.Worker
+          ? new Worker(path, isModule ? { type: "module" } : undefined)
+          : ((SINGLE_THREAD = new SingleThreadWorker()) as unknown as Worker);
+        if (path !== WORKER_PATH) {
+          URL.revokeObjectURL(path);
+        }
       }
       this._worker!.addEventListener("message", this.onMessage.bind(this));
     }
@@ -206,11 +211,54 @@ export class ToWorker {
   }
 }
 
+class SingleThreadWorker {
+  onMessage: any | undefined;
+
+  addEventListener(event: string, listener: any) {
+    this.onMessage = listener;
+  }
+
+  postMessage(msg: any) {
+    // This doesn't need to be awaited.
+    handleMessage(msg);
+  }
+
+  terminate() {}
+}
+
+class NodeWorker {
+  worker: any;
+
+  constructor(worker: any) {
+    this.worker = worker;
+  }
+
+  addEventListener(event: string, listener: any) {
+    this.worker["on"](event, wrapNodeListener(listener));
+  }
+
+  postMessage(msg: any) {
+    this.worker["postMessage"](msg);
+  }
+
+  terminate() {
+    this.worker["terminate"]();
+  }
+}
+
+function wrapNodeListener(listener: any): any {
+  return function (data: any) {
+    listener({ ["data"]: data });
+  };
+}
+
 export class FromWorker {
   postMessage(msg: any) {
     if (isNode()) {
       // @ts-ignore
       require("worker_threads")["parentPort"]["postMessage"](msg);
+    } else if (SINGLE_THREAD) {
+      SINGLE_THREAD.onMessage!({ ["data"]: msg });
     } else {
       postMessage(msg);
     }
@@ -247,39 +295,18 @@ class Deferred<T> {
   }
 }
 
-class NodeWorker {
-  worker: any;
-
-  constructor(worker: any) {
-    this.worker = worker;
-  }
-
-  addEventListener(event: string, listener: any) {
-    this.worker["on"](event, wrapNodeListener(listener));
-  }
-
-  postMessage(msg: any) {
-    this.worker["postMessage"](msg);
-  }
-
-  terminate() {
-    this.worker["terminate"]();
-  }
+let FROM_WORKER: FromWorker;
+export function fromWorker(): FromWorker {
+  return FROM_WORKER || (FROM_WORKER = new FromWorker());
 }
 
-function wrapNodeListener(listener: any): any {
-  return function (data: any) {
-    listener({ ["data"]: data });
-  };
-}
-
-let _toWorker: ToWorker | undefined;
+let TO_WORKER: ToWorker | undefined;
 export function toWorker(): ToWorker {
-  return _toWorker ? _toWorker : (_toWorker = new ToWorker());
+  return TO_WORKER || (TO_WORKER = new ToWorker());
 }
 
 export function terminateToWorker() {
-  if (_toWorker) {
-    _toWorker.terminateWorker();
+  if (TO_WORKER) {
+    TO_WORKER.terminateWorker();
   }
 }

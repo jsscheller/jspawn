@@ -6,13 +6,12 @@ import {
   SubprocessRun,
   FSRequest,
   FSRequestType,
+  fromWorker as channel,
 } from "./workerChannel";
 import { Context } from "./context";
 import { resizeBuffer, isNode, isMainThread } from "./utils";
 import * as wasiFS from "./wasiFS";
 import * as wasi from "./wasi/index";
-
-const fromWorker = new FromWorker();
 
 if (!isMainThread()) {
   if (isNode()) {
@@ -23,22 +22,25 @@ if (!isMainThread()) {
   }
 }
 
-let ctx: Context;
-let nodeShim: NodeShim;
 async function onMessage(e: MessageEvent) {
   const msg = (isNode() ? e : e.data) as ToWorkerMessage;
+  await handleMessage(msg);
+}
 
-  if (!ctx) {
-    ctx = new Context();
-    nodeShim = new NodeShim(ctx);
+let CTX: Context;
+let NODE_SHIM: NodeShim;
+export async function handleMessage(msg: ToWorkerMessage) {
+  if (!CTX) {
+    CTX = new Context();
+    NODE_SHIM = new NodeShim(CTX);
   }
 
   switch (msg.msg.type) {
     case MessageType.SubprocessRun:
-      await subprocessRun(msg.msg, ctx, nodeShim);
+      await subprocessRun(msg.msg, CTX, NODE_SHIM);
       break;
     case MessageType.FSRequest:
-      await fsReqeust(msg.req!, msg.msg, ctx);
+      await fsReqeust(msg.req!, msg.msg, CTX);
       break;
   }
 }
@@ -56,7 +58,7 @@ async function subprocessRun(
       msg.wasmPath
     );
     if (!resolvedBinaryPath) {
-      return fromWorker.pub(
+      return channel().pub(
         msg.topic,
         {
           type: MessageType.SubprocessRunError,
@@ -71,17 +73,18 @@ async function subprocessRun(
     // @ts-ignore
     mod = await WebAssembly.compile(buf);
   } else {
-    mod = await WebAssembly.compileStreaming(fetch(binaryPath));
+    const src = await fetch(binaryPath);
+    mod = await WebAssembly.compileStreaming(src);
   }
 
   const stdout = new Stdout((buf: Uint8Array) => {
-    fromWorker.pub(msg.topic, {
+    channel().pub(msg.topic, {
       type: MessageType.SubprocessRunStdout,
       buf,
     });
   });
   const stderr = new Stdout((buf: Uint8Array) => {
-    fromWorker.pub(msg.topic, {
+    channel().pub(msg.topic, {
       type: MessageType.SubprocessRunStderr,
       buf,
     });
@@ -168,7 +171,7 @@ async function subprocessRun(
     }
   }
 
-  fromWorker.pub(
+  channel().pub(
     msg.topic,
     {
       type: MessageType.SubprocessRunExitCode,
@@ -260,13 +263,13 @@ async function fsReqeust(req: number, msg: FSRequest, ctx: Context) {
     if (typeof err === "number") {
       err = { ["code"]: "E" + wasi.errnoName(err) };
     }
-    fromWorker.res(req, {
+    channel().res(req, {
       type: MessageType.FSResponse,
       err,
     });
     return;
   }
-  fromWorker.res(req, {
+  channel().res(req, {
     type: MessageType.FSResponse,
     ok,
   });

@@ -1,5 +1,5 @@
 import {
-  toWorker,
+  toWorker as channel,
   MessageType,
   FSRequestType,
   FSResponse,
@@ -17,7 +17,7 @@ export async function writeFile(
   const transfers =
     opts.transfer && data instanceof Uint8Array ? [data.buffer] : [];
   return unwrap<void>(
-    toWorker().req<FSResponse>(
+    channel().req<FSResponse>(
       {
         type: MessageType.FSRequest,
         fsType: FSRequestType.WriteFile,
@@ -30,7 +30,7 @@ export async function writeFile(
 
 export async function readFileToBlob(path: string): Promise<Blob> {
   return unwrap<Blob>(
-    toWorker().req<FSResponse>({
+    channel().req<FSResponse>({
       type: MessageType.FSRequest,
       fsType: FSRequestType.ReadFileToBlob,
       args: [path],
