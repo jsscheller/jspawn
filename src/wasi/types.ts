@@ -132,20 +132,10 @@ class StringType {
     return this.get(mem, ptr, len);
   }
 
-  set(
-    mem: Memory,
-    ptr: number,
-    value: string,
-    len: number = value.length,
-    nreadPtr?: number
-  ) {
-    const { read } = this.enc.encodeInto(
-      value,
-      mem.u8.subarray(ptr, ptr + len)
-    );
-    if (nreadPtr) {
-      uint32_t.set(mem, nreadPtr, read!);
-    }
+  set(mem: Memory, ptr: number, value: string, len?: number) {
+    const bytes = this.enc.encode(value);
+    len = len != null ? len : bytes.length;
+    mem.u8.set(bytes.subarray(0, len!), ptr);
   }
 }
 
