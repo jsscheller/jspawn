@@ -365,7 +365,14 @@ export const snapshotPreview1 = {
     throw e.ERRNO_NOSYS;
   },
   ["random_get"]: function (ctx: Context, bufPtr: number, bufLen: number) {
-    crypto.getRandomValues(ctx.mem.u8.subarray(bufPtr, bufPtr + bufLen));
+    if (globalThis.crypto) {
+      crypto.getRandomValues(ctx.mem.u8.subarray(bufPtr, bufPtr + bufLen));
+    } else {
+      let len = bufLen;
+      while (len--) {
+        ctx.mem.u8[bufPtr + len] = Math.floor(Math.random() * 256);
+      }
+    }
   },
   ["sched_yield"]: function (_ctx: Context) {},
   ["sock_recv"]: function (
