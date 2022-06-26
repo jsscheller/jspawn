@@ -3,8 +3,8 @@ import { isNode } from "./utils";
 
 let WASM_PATH: string[] = [];
 
-export function pushPath(...args: string[]) {
-  WASM_PATH = WASM_PATH.concat(args);
+export function setBinarySearchPath(path: string[] | string) {
+  WASM_PATH = typeof path === "string" ? [path] : path;
 }
 
 declare type Options = {

@@ -53,23 +53,18 @@ async function subprocessRun(
   nodeShim: NodeShim
 ) {
   let mod: WebAssembly.Module;
-  let binaryPath = msg.program;
-  if (isNode()) {
-    const resolvedBinaryPath = await resolveBinaryPath(
-      msg.program,
-      msg.wasmPath
+  const binaryPath = await resolveBinaryPath(msg.program, msg.wasmPath);
+  if (!binaryPath) {
+    return channel().pub(
+      msg.topic,
+      {
+        type: MessageType.SubprocessRunError,
+        message: `unable to resolve WASM file for program: ${msg.program}`,
+      },
+      true
     );
-    if (!resolvedBinaryPath) {
-      return channel().pub(
-        msg.topic,
-        {
-          type: MessageType.SubprocessRunError,
-          message: `unable to resolve WASM file for program: ${msg.program}`,
-        },
-        true
-      );
-    }
-    binaryPath = resolvedBinaryPath;
+  }
+  if (isNode()) {
     // @ts-ignore
     const buf = await require("fs/promises")["readFile"](binaryPath!);
     // @ts-ignore
@@ -196,9 +191,11 @@ async function resolveBinaryPath(
   program: string,
   wasmPath: string[]
 ): Promise<string | undefined> {
-  // @ts-ignore
-  const path = require("path");
-  const sep = path["sep"];
+  let sep = "/";
+  if (isNode()) {
+    // @ts-ignore
+    sep = require("path")["sep"];
+  }
   const wasmExt = ".wasm";
 
   if (program.includes(sep) || program.endsWith(wasmExt)) {
@@ -212,35 +209,43 @@ async function resolveBinaryPath(
     return cached;
   }
 
-  // @ts-ignore
-  const fs = require("fs/promises");
+  if (isNode()) {
+    // @ts-ignore
+    const fs = require("fs/promises");
+    // @ts-ignore
+    const path = require("path");
 
-  if (!BINARY_RESOLVE_CACHE.wasmPath) {
-    BINARY_RESOLVE_CACHE.wasmPath = [];
+    if (!BINARY_RESOLVE_CACHE.wasmPath) {
+      BINARY_RESOLVE_CACHE.wasmPath = [];
 
-    const jspawnPath = path["join"]("node_modules", "@jspawn");
-    let ents: string[] | undefined;
-    try {
-      ents = await fs["readdir"](jspawnPath);
-    } catch (_) {}
-    if (ents) {
-      for (const ent of ents) {
-        if (ent !== "jspawn") {
-          BINARY_RESOLVE_CACHE.wasmPath!.push(path.join(jspawnPath, ent));
+      const jspawnPath = path["join"]("node_modules", "@jspawn");
+      let ents: string[] | undefined;
+      try {
+        ents = await fs["readdir"](jspawnPath);
+      } catch (_) {}
+      if (ents) {
+        for (const ent of ents) {
+          if (ent !== "jspawn") {
+            BINARY_RESOLVE_CACHE.wasmPath!.push(path.join(jspawnPath, ent));
+          }
         }
       }
     }
-  }
 
-  const programWithoutExt = program.replace(wasmExt, "");
-  for (const testPath of wasmPath.concat(BINARY_RESOLVE_CACHE.wasmPath)) {
-    if (testPath.split(sep).pop()!.includes(programWithoutExt)) {
-      try {
-        const resolved = path["join"](testPath, program);
-        await fs["stat"](resolved);
-        return (BINARY_RESOLVE_CACHE.resolutions[program] = resolved);
-      } catch (_) {}
+    const programWithoutExt = program.replace(wasmExt, "");
+    for (const testPath of wasmPath.concat(BINARY_RESOLVE_CACHE.wasmPath)) {
+      if (testPath.endsWith(sep + program)) {
+        return (BINARY_RESOLVE_CACHE.resolutions[program] = testPath);
+      } else if (testPath.split(sep).pop()!.includes(programWithoutExt)) {
+        try {
+          const resolved = path["join"](testPath, program);
+          await fs["stat"](resolved);
+          return (BINARY_RESOLVE_CACHE.resolutions[program] = resolved);
+        } catch (_) {}
+      }
     }
+  } else {
+    return wasmPath.find((path: string) => path.endsWith(sep + program));
   }
 
   return undefined;
