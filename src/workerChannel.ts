@@ -1,4 +1,4 @@
-import { isMainThread, isNode } from "./utils";
+import { isNode } from "./utils";
 import { handleMessage } from "./worker";
 
 export type Message =
@@ -88,17 +88,19 @@ export type SerializedURL = {
 };
 
 let WORKER_PATH!: string;
-if (isMainThread()) {
-  // UMD/nodejs note:
-  // Normally accessing `import.meta` doesn't work in non-modules.
-  // However, it gets replaced with an equivalent value in the build step when targeting UMD.
+// UMD/nodejs note:
+// Normally accessing `import.meta` doesn't work in non-modules.
+// However, it gets replaced with an equivalent value in the build step when targeting UMD.
+// @ts-ignore
+try {
   // @ts-ignore
-  try {
-    // @ts-ignore
-    WORKER_PATH = import.meta.url;
-  } catch (_) {
+  WORKER_PATH = import.meta.url;
+} catch (_) {
+  if (globalThis.document) {
     // @ts-ignore
     WORKER_PATH = document.currentScript!.src;
+  } else {
+    WORKER_PATH = location.href;
   }
 }
 
