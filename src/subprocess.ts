@@ -67,6 +67,10 @@ export async function run(
 
   if (errMsg) {
     throw new Error(errMsg);
+  } else if (output.exitCode) {
+    const err = new Error(`process exited with non-zero exit-code: ${program}`);
+    Object.assign(err, output);
+    throw err;
   }
 
   return output;
