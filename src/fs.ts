@@ -3,6 +3,7 @@ import {
   MessageType,
   FSRequestType,
   FSResponse,
+  SerializedURL,
 } from "./workerChannel";
 import { isNode } from "./utils";
 
@@ -12,7 +13,7 @@ declare type WriteFileOptions = {
 
 export async function writeFile(
   path: string,
-  data: string | Uint8Array | Blob,
+  data: string | Uint8Array | Blob | URL,
   opts: WriteFileOptions = {}
 ): Promise<void> {
   if (isNode()) {
@@ -21,15 +22,18 @@ export async function writeFile(
   } else {
     const transfers =
       opts.transfer && data instanceof Uint8Array ? [data.buffer] : [];
+    const serData =
+      data instanceof URL ? ({ url: data.toString() } as SerializedURL) : data;
     unwrap<void>(
       channel().req<FSResponse>(
         {
           type: MessageType.FSRequest,
           fsType: FSRequestType.WriteFile,
-          args: [path, data],
+          args: [path, serData],
         },
         transfers
-      )
+      ),
+      errorContext({ ["path"]: path })
     );
   }
 }
@@ -46,15 +50,22 @@ export async function readFileToBlob(path: string): Promise<Blob> {
         type: MessageType.FSRequest,
         fsType: FSRequestType.ReadFileToBlob,
         args: [path],
-      })
+      }),
+      errorContext({ ["path"]: path })
     );
   }
 }
 
-async function unwrap<T>(res: Promise<FSResponse>): Promise<T> {
+function errorContext(other: any): any {
+  return Object.assign({ ["stack"]: new Error().stack }, other);
+}
+
+async function unwrap<T>(res: Promise<FSResponse>, errCtx: any): Promise<T> {
   const { ok, err } = await res;
   if (err) {
-    throw err;
+    const fsErr = new Error(err["code"] || "FSError");
+    Object.assign(fsErr, err, errCtx);
+    throw fsErr;
   } else {
     return ok as T;
   }

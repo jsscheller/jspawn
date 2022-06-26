@@ -83,6 +83,10 @@ type Subscription = {
   callback: (msg: Message) => void;
 };
 
+export type SerializedURL = {
+  url: string;
+};
+
 let WORKER_PATH!: string;
 if (isMainThread()) {
   // UMD/nodejs note:

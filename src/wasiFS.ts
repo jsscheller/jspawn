@@ -110,7 +110,7 @@ export function renameSync(ctx: Context, oldPath: string, newPath: string) {
 export function writeFileSync(
   ctx: Context,
   file: string,
-  data: ArrayBuffer | string | Blob
+  data: ArrayBuffer | string | Blob | URL
 ) {
   if (typeof data === "string") {
     data = ctx.stringToBytes(data).buffer;
@@ -120,6 +120,8 @@ export function writeFileSync(
     .asRegularFile();
   if (data instanceof Blob) {
     reg.writeBlob(data);
+  } else if (data instanceof URL) {
+    reg.writeURL(data);
   } else {
     const iovs = new IOVecs(new Uint8Array(data as ArrayBuffer));
     reg.write(iovs);

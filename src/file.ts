@@ -1,5 +1,5 @@
 import * as wasi from "./wasi/index";
-import { resizeBuffer, Cell, unreachable } from "./utils";
+import { resizeBuffer, Cell } from "./utils";
 import { IOVecs } from "./ioVecs";
 
 export class File {
@@ -26,17 +26,31 @@ function defaultImpl(): never {
 
 export class RegularFile extends File {
   buf?: Uint8Array;
+  bufSize?: number;
   blob?: Blob;
-  size: number;
+  url?: URL;
 
-  constructor(src?: Uint8Array | Blob) {
+  constructor(src?: Uint8Array | Blob | URL) {
     super();
     if (src instanceof Blob) {
       this.blob = src;
-      this.size = src.size;
+    } else if (src instanceof URL) {
+      this.url = src;
     } else {
       this.buf = src;
-      this.size = src ? src.length : 0;
+    }
+  }
+
+  get size() {
+    if (this.url) {
+      this.toBuf();
+      return this.buf!.length;
+    } else if (this.blob) {
+      return this.blob.size;
+    } else if (this.buf) {
+      return this.bufSize != null ? this.bufSize : this.buf.length;
+    } else {
+      return 0;
     }
   }
 
@@ -63,9 +77,22 @@ export class RegularFile extends File {
 
   toBuf() {
     if (this.blob) {
-      this.buf = new Uint8Array(lazyFileReader().readAsArrayBuffer(this.blob));
-      this.blob = undefined;
+      this.buf = new Uint8Array(fileReader().readAsArrayBuffer(this.blob));
+      delete this.blob;
+    } else if (this.url) {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", this.url.toString(), false);
+      xhr.responseType = "arraybuffer";
+      xhr.send();
+      delete this.url;
+      this.buf = new Uint8Array(xhr.response);
+    } else if (!this.buf) {
+      this.buf = new Uint8Array();
     }
+  }
+
+  clearSrc() {
+    this.buf = this.blob = this.url = undefined;
   }
 
   allocate(offset: bigint | number, len: bigint | number) {
@@ -77,26 +104,27 @@ export class RegularFile extends File {
 
     this.toBuf();
     this.buf = resizeBuffer(this.buf!, newSize, this.size);
-    this.size = newSize;
+    this.bufSize = newSize;
   }
 
   truncate(newSize: bigint | number) {
     newSize = Number(newSize);
     if (newSize === 0) {
-      this.buf = this.blob = undefined;
+      this.clearSrc();
     } else if (newSize > this.size) {
       this.allocate(0, newSize);
     } else if (this.blob) {
       this.blob = this.blob.slice(0, newSize);
     } else if (newSize !== this.size) {
+      this.toBuf();
       const prevBuf = this.buf;
       this.buf = new Uint8Array(newSize);
+      delete this.bufSize;
       if (prevBuf) {
         // Copy old data over to the new storage.
         this.buf!.set(prevBuf.subarray(0, newSize));
       }
     }
-    this.size = newSize;
   }
 
   read(iovs: IOVecs, pos: bigint | number): number {
@@ -110,14 +138,17 @@ export class RegularFile extends File {
       if (this.blob) {
         buf.set(
           new Uint8Array(
-            lazyFileReader().readAsArrayBuffer(this.blob.slice(pos, pos + n))
+            fileReader().readAsArrayBuffer(this.blob.slice(pos, pos + n))
           )
         );
-      } else if (n > 8) {
-        buf.set(this.buf!.subarray(pos, pos + n));
       } else {
-        for (let i = 0; i < n; i++) {
-          buf[i] = this.buf![pos + i];
+        this.toBuf();
+        if (n > 8) {
+          buf.set(this.buf!.subarray(pos, pos + n));
+        } else {
+          for (let i = 0; i < n; i++) {
+            buf[i] = this.buf![pos + i];
+          }
         }
       }
       pos += n;
@@ -128,8 +159,8 @@ export class RegularFile extends File {
 
   readToBlob(): Blob {
     if (!this.blob) {
-      const buf = this.buf || new Uint8Array();
-      this.blob = new Blob([buf.subarray(0, this.size)]);
+      this.toBuf();
+      this.blob = new Blob([this.buf!.subarray(0, this.size)]);
       delete this.buf;
     }
     return this.blob!;
@@ -146,9 +177,10 @@ export class RegularFile extends File {
       }
 
       if (pos === 0 && this.size === 0) {
+        this.clearSrc();
         // If this is a simple first write to an empty file, do a fast set since we don't need to care about old data.
         this.buf = buf.slice();
-        this.size = n;
+        delete this.bufSize;
       } else {
         this.toBuf();
         if (pos + n <= this.size) {
@@ -158,7 +190,7 @@ export class RegularFile extends File {
           // Appending to an existing file and we need to reallocate.
           this.buf = resizeBuffer(this.buf!, pos + n, this.size);
           this.buf!.set(buf, pos);
-          this.size = pos + n;
+          this.bufSize = pos + n;
         }
       }
       nwritten += n;
@@ -166,13 +198,14 @@ export class RegularFile extends File {
     return nwritten;
   }
 
-  writeBlob(blob: Blob, pos: bigint | number = 0): number {
-    if (pos !== 0 || this.size !== 0) {
-      unreachable();
-    }
-    delete this.buf;
+  writeBlob(blob: Blob) {
+    this.clearSrc();
     this.blob = blob;
-    return (this.size = this.blob.size);
+  }
+
+  writeURL(url: URL) {
+    this.clearSrc();
+    this.url = url;
   }
 }
 
@@ -191,9 +224,9 @@ declare var FileReaderSync: {
   new (): FileReaderSync;
 };
 
-let _lazyFileReader: FileReaderSync | undefined;
-function lazyFileReader(): FileReaderSync {
-  return (_lazyFileReader = _lazyFileReader || new FileReaderSync());
+let FILE_READER: FileReaderSync | undefined;
+function fileReader(): FileReaderSync {
+  return (FILE_READER = FILE_READER || new FileReaderSync());
 }
 
 export class Dir extends File {

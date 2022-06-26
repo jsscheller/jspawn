@@ -7,12 +7,14 @@ import {
   FSRequest,
   FSRequestType,
   fromWorker as channel,
+  SerializedURL,
 } from "./workerChannel";
 import { Context } from "./context";
 import { resizeBuffer, isNode, isMainThread } from "./utils";
 import * as wasiFS from "./wasiFS";
 import * as wasi from "./wasi/index";
 
+// TODO: only add listener if this is THE worker thread.
 if (!isMainThread()) {
   if (isNode()) {
     // @ts-ignore
@@ -248,13 +250,24 @@ async function fsReqeust(req: number, msg: FSRequest, ctx: Context) {
   let ok;
   try {
     switch (msg.fsType) {
-      case FSRequestType.WriteFile:
+      case FSRequestType.WriteFile: {
+        let data = msg.args[1] as
+          | Uint8Array
+          | string
+          | Blob
+          | SerializedURL
+          | URL;
+        const url = (data as SerializedURL).url;
+        if (url) {
+          data = new URL(url);
+        }
         wasiFS.writeFileSync(
           ctx,
           msg.args[0] as string,
-          msg.args[1] as Uint8Array | string | Blob
+          data as Uint8Array | string | Blob | URL
         );
         break;
+      }
       case FSRequestType.ReadFileToBlob:
         ok = wasiFS.readFileToBlobSync(ctx, msg.args[0] as string);
         break;
