@@ -26,6 +26,7 @@ module.exports = function (config) {
     colors: true,
     logLevel: config.LOG_INFO,
     autoWatch: true,
+    // Set to false to keep browser open.
     singleRun: true,
     concurrency: Infinity,
   };

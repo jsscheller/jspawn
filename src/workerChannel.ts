@@ -52,6 +52,8 @@ export type SubprocessRunError = {
 export const enum FSRequestType {
   WriteFile,
   ReadFileToBlob,
+  Mkdir,
+  Readdir,
 }
 
 export type FSRequest = {

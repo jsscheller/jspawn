@@ -274,7 +274,17 @@ async function fsReqeust(req: number, msg: FSRequest, ctx: Context) {
         break;
       }
       case FSRequestType.ReadFileToBlob:
-        ok = wasiFS.readFileToBlobSync(ctx, msg.args[0] as string);
+        ok = wasiFS.readFileToBlobSync(
+          ctx,
+          msg.args[0] as string,
+          msg.args[1] as string | undefined
+        );
+        break;
+      case FSRequestType.Mkdir:
+        ok = wasiFS.mkdirSync(ctx, msg.args[0] as string);
+        break;
+      case FSRequestType.Readdir:
+        ok = wasiFS.readdirSync(ctx, msg.args[0] as string);
         break;
     }
   } catch (err) {

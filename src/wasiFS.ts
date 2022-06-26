@@ -19,8 +19,12 @@ export const constants = {
   ["S_IFLNK"]: 40960,
 };
 
-export function readFileToBlobSync(ctx: Context, path: string): Blob {
-  return ctx.rootDir.lookup(path).asRegularFile().readToBlob();
+export function readFileToBlobSync(
+  ctx: Context,
+  path: string,
+  type?: string
+): Blob {
+  return ctx.rootDir.lookup(path).asRegularFile().readToBlob(type);
 }
 
 // The following are used by `nodeShim`.

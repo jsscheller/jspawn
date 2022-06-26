@@ -17,8 +17,10 @@ export async function writeFile(
   opts: WriteFileOptions = {}
 ): Promise<void> {
   if (isNode()) {
-    // @ts-ignore
-    nodeFS()["writeFile"](path, data);
+    await nodeFS((fs: any) => {
+      // @ts-ignore
+      return fs["writeFile"](path, data);
+    });
   } else {
     const transfers =
       opts.transfer && data instanceof Uint8Array ? [data.buffer] : [];
@@ -38,17 +40,64 @@ export async function writeFile(
   }
 }
 
-export async function readFileToBlob(path: string): Promise<Blob> {
+declare type ReadFileToBlobOptions = {
+  type?: string;
+};
+
+export async function readFileToBlob(
+  path: string,
+  opts: ReadFileToBlobOptions = {}
+): Promise<Blob> {
   if (isNode()) {
-    // @ts-ignore
-    const buf = await nodeFS()["readFile"](path);
-    // @ts-ignore
-    return new (require("buffer")["Blob"])([buf]);
+    const buf = await nodeFS((fs: any) => {
+      // @ts-ignore
+      return fs["readFile"](path);
+    });
+    return nodeBuffer((buffer: any) => {
+      // @ts-ignore
+      return new buffer["Blob"]([buf], opts);
+    });
   } else {
     return unwrap<Blob>(
       channel().req<FSResponse>({
         type: MessageType.FSRequest,
         fsType: FSRequestType.ReadFileToBlob,
+        args: [path, opts.type],
+      }),
+      errorContext({ ["path"]: path })
+    );
+  }
+}
+
+export async function mkdir(path: string): Promise<void> {
+  if (isNode()) {
+    await nodeFS((fs: any) => {
+      // @ts-ignore
+      return fs["mkdir"](path);
+    });
+  } else {
+    return unwrap<void>(
+      channel().req<FSResponse>({
+        type: MessageType.FSRequest,
+        fsType: FSRequestType.Mkdir,
+        args: [path],
+      }),
+      errorContext({ ["path"]: path })
+    );
+  }
+}
+
+export async function readdir(path: string): Promise<string[]> {
+  if (isNode()) {
+    return nodeFS((fs: any) => {
+      // @ts-ignore
+      return fs["readdir"](path);
+    });
+  } else {
+    return unwrap<string[]>(
+      channel().req<FSResponse>({
+        type: MessageType.FSRequest,
+        fsType: FSRequestType.Readdir,
         args: [path],
       }),
       errorContext({ ["path"]: path })
@@ -71,7 +120,20 @@ async function unwrap<T>(res: Promise<FSResponse>, errCtx: any): Promise<T> {
   }
 }
 
-function nodeFS(): any {
-  // @ts-ignore
-  return require("fs/promises");
+function nodeFS<T>(cb: (fs: any) => Promise<T>): Promise<T> {
+  return loadModule("fs/promises", cb);
+}
+
+function nodeBuffer<T>(cb: (buffer: any) => Promise<T>): Promise<T> {
+  return loadModule("buffer", cb);
+}
+
+function loadModule<T>(name: string, cb: (x: any) => Promise<T>): Promise<T> {
+  try {
+    return import(name).then(cb);
+  } catch (_) {
+    // @ts-ignore
+    const x = require(name);
+    return cb(x);
+  }
 }

@@ -157,11 +157,13 @@ export class RegularFile extends File {
     return nread;
   }
 
-  readToBlob(): Blob {
+  readToBlob(type?: string): Blob {
     if (!this.blob) {
       this.toBuf();
-      this.blob = new Blob([this.buf!.subarray(0, this.size)]);
+      this.blob = new Blob([this.buf!.subarray(0, this.size)], { type });
       delete this.buf;
+    } else if (type && this.blob.type !== type) {
+      return new Blob([this.blob], { type });
     }
     return this.blob!;
   }
@@ -347,7 +349,7 @@ export class Dir extends File {
     let nbytes = 0;
     for (const [name, ent] of this.entries.entries()) {
       const id = this.entryIDs.get(ent)!;
-      if (cookie < id) {
+      if (cookie >= id) {
         continue;
       }
       const dirent = new wasi.Dirent([
@@ -391,8 +393,8 @@ export class Dir extends File {
     if (!parent) {
       throw wasi.ERRNO_NOENT;
     }
-    this.entries.set(name!, newEntry);
-    this.entryIDs.set(newEntry, this.nextID++);
+    parent.entries.set(name!, newEntry);
+    parent.entryIDs.set(newEntry, parent.nextID++);
   }
 
   createDir(path: string) {
