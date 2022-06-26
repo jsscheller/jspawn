@@ -54,6 +54,7 @@ export const enum FSRequestType {
   ReadFileToBlob,
   Mkdir,
   Readdir,
+  Rmdir,
 }
 
 export type FSRequest = {

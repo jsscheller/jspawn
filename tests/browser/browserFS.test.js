@@ -9,5 +9,15 @@ describe("node fs tests", function () {
     await fs.mkdir("foo/bar");
     const one = await fs.readdir("foo");
     expect(one.length).to.equal(1);
+
+    await fs.rmdir("foo", { recursive: true });
+
+    let err;
+    try {
+      await fs.readdir("foo");
+    } catch (_) {
+      err = true;
+    }
+    expect(err).to.equal(true);
   });
 });

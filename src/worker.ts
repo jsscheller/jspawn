@@ -292,6 +292,13 @@ async function fsReqeust(req: number, msg: FSRequest, ctx: Context) {
       case FSRequestType.Readdir:
         ok = wasiFS.readdirSync(ctx, msg.args[0] as string);
         break;
+      case FSRequestType.Rmdir:
+        ok = wasiFS.rmdirSync(
+          ctx,
+          msg.args[0] as string,
+          msg.args[1] as boolean
+        );
+        break;
     }
   } catch (err) {
     if (typeof err === "number") {

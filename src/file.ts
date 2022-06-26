@@ -445,7 +445,7 @@ export class Dir extends File {
     }
   }
 
-  removeDir(path: string) {
+  removeDir(path: string, recursive?: boolean) {
     path = this.resolvePath(path);
     const { parent, entry, name } = this.getEntry(path);
     if (!entry) {
@@ -455,7 +455,7 @@ export class Dir extends File {
       throw wasi.ERRNO_NOTDIR;
     }
     const dir = entry.asDir();
-    if (dir.entries.size !== 0) {
+    if (dir.entries.size !== 0 && !recursive) {
       throw wasi.ERRNO_NOTEMPTY;
     }
     if (dir.isPreopen) {

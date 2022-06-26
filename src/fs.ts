@@ -105,6 +105,31 @@ export async function readdir(path: string): Promise<string[]> {
   }
 }
 
+declare type RmdirOptions = {
+  recursive?: boolean;
+};
+
+export async function rmdir(
+  path: string,
+  opts: RmdirOptions = {}
+): Promise<void> {
+  if (isNode()) {
+    return nodeFS((fs: any) => {
+      // @ts-ignore
+      return fs["rmdir"](path, opts);
+    });
+  } else {
+    return unwrap<void>(
+      channel().req<FSResponse>({
+        type: MessageType.FSRequest,
+        fsType: FSRequestType.Rmdir,
+        args: [path, opts.recursive],
+      }),
+      errorContext({ ["path"]: path })
+    );
+  }
+}
+
 function errorContext(other: any): any {
   return Object.assign({ ["stack"]: new Error().stack }, other);
 }

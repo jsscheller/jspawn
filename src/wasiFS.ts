@@ -99,8 +99,8 @@ export function readdirSync(ctx: Context, path: string): string[] {
   return dirents.map((dirent: wasi.Dirent) => dirent.name);
 }
 
-export function rmdirSync(ctx: Context, path: string) {
-  ctx.rootDir.removeDir(path);
+export function rmdirSync(ctx: Context, path: string, recursive?: boolean) {
+  ctx.rootDir.removeDir(path, recursive);
 }
 
 export function unlinkSync(ctx: Context, path: string) {
