@@ -1,6 +1,7 @@
 import { Context } from "./context";
 import * as wasiFS from "./wasiFS";
 import * as wasi from "./wasi/index";
+import { unreachable } from "./utils";
 
 export class NodeShim {
   process: any;
@@ -97,6 +98,11 @@ export class NodeShim {
     this.__dirname = "";
 
     this.Buffer = {
+      // We need alloc so `Buffer.from` is called:
+      // `return Buffer["alloc"] ? Buffer.from(arrayBuffer) : new Buffer(arrayBuffer);`
+      ["alloc"]() {
+        unreachable();
+      },
       ["from"](buf: any) {
         return buf;
       },
