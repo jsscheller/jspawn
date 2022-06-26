@@ -138,6 +138,12 @@ async function subprocessRun(
     emMod["FS"]["chdir"](working);
 
     exitCode = emMod["callMain"](msg.args);
+    if (exitCode == null) {
+      const getExitStatus = emMod["exitStatus"];
+      if (typeof getExitStatus === "function") {
+        exitCode = getExitStatus();
+      }
+    }
   } else {
     const args = [msg.program].concat(msg.args);
 
