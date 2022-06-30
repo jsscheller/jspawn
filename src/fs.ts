@@ -35,7 +35,7 @@ export async function writeFile(
         },
         transfers
       ),
-      errorContext({ ["path"]: path })
+      { ["path"]: path }
     );
   }
 }
@@ -64,7 +64,7 @@ export async function readFileToBlob(
         fsType: FSRequestType.ReadFileToBlob,
         args: [path, opts.type],
       }),
-      errorContext({ ["path"]: path })
+      { ["path"]: path }
     );
   }
 }
@@ -82,7 +82,7 @@ export async function mkdir(path: string): Promise<void> {
         fsType: FSRequestType.Mkdir,
         args: [path],
       }),
-      errorContext({ ["path"]: path })
+      { ["path"]: path }
     );
   }
 }
@@ -100,7 +100,7 @@ export async function readdir(path: string): Promise<string[]> {
         fsType: FSRequestType.Readdir,
         args: [path],
       }),
-      errorContext({ ["path"]: path })
+      { ["path"]: path }
     );
   }
 }
@@ -125,13 +125,9 @@ export async function rmdir(
         fsType: FSRequestType.Rmdir,
         args: [path, opts.recursive],
       }),
-      errorContext({ ["path"]: path })
+      { ["path"]: path }
     );
   }
-}
-
-function errorContext(other: any): any {
-  return Object.assign({ ["stack"]: new Error().stack }, other);
 }
 
 async function unwrap<T>(res: Promise<FSResponse>, errCtx: any): Promise<T> {
