@@ -84,12 +84,20 @@ export class NodeShim {
       },
     };
 
+    const child_process = {
+      ["spawnSync"]: function () {
+        return { ["status"]: 1 };
+      },
+    };
+
     this.require = function (mod: string) {
       switch (mod) {
         case "fs":
           return boundFs;
         case "path":
           return path;
+        case "child_process":
+          return child_process;
         default:
           throw `unexpected module: ${mod}`;
       }
