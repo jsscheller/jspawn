@@ -1,6 +1,6 @@
 {
   "name": "@jspawn/jspawn",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "a subprocess API for WebAssembly programs",
   "main": "umd/jspawn.js",
   "module": "esm/jspawn.mjs",
