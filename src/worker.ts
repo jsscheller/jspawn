@@ -225,14 +225,19 @@ async function resolveBinaryPath(
       BINARY_RESOLVE_CACHE.wasmPath = [];
 
       const jspawnPath = path["join"]("node_modules", "@jspawn");
-      let ents: string[] | undefined;
+      let folders: string[] | undefined;
       try {
-        ents = await fs["readdir"](jspawnPath);
+        folders = await fs["readdir"](jspawnPath);
       } catch (_) {}
-      if (ents) {
-        for (const ent of ents) {
-          if (ent !== "jspawn") {
-            BINARY_RESOLVE_CACHE.wasmPath!.push(path.join(jspawnPath, ent));
+      if (folders) {
+        for (const folder of folders.filter((name) => name !== "jspawn")) {
+          const folderPath = path["join"](jspawnPath, folder);
+          for (const ent of await fs["readdir"](folderPath)) {
+            if (ent === program) {
+              BINARY_RESOLVE_CACHE.wasmPath!.push(
+                path["join"](folderPath, ent)
+              );
+            }
           }
         }
       }
@@ -242,12 +247,6 @@ async function resolveBinaryPath(
     for (const testPath of wasmPath.concat(BINARY_RESOLVE_CACHE.wasmPath)) {
       if (testPath.endsWith(sep + program)) {
         return (BINARY_RESOLVE_CACHE.resolutions[program] = testPath);
-      } else if (testPath.split(sep).pop()!.includes(programWithoutExt)) {
-        try {
-          const resolved = path["join"](testPath, program);
-          await fs["stat"](resolved);
-          return (BINARY_RESOLVE_CACHE.resolutions[program] = resolved);
-        } catch (_) {}
       }
     }
   } else {
