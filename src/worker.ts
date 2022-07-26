@@ -71,7 +71,11 @@ async function subprocessRun(
     mod = await WebAssembly.compile(buf);
   } else {
     const src = await fetch(binaryPath);
-    mod = await WebAssembly.compileStreaming(src);
+    if (WebAssembly.compileStreaming) {
+      mod = await WebAssembly.compileStreaming(src);
+    } else {
+      mod = await WebAssembly.compile(await src.arrayBuffer());
+    }
   }
 
   const stdout = new Stdout((buf: Uint8Array) => {
