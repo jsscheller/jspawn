@@ -38,6 +38,6 @@ export default [
   { input: "jspawn", format: "umd", minify: true },
   { input: "jspawn", format: "iife", minify: false },
   { input: "jspawn", format: "iife", minify: true },
-  { input: "worker", format: "umd", minify: false, ext: "cjs" },
-  { input: "worker", format: "umd", minify: true, ext: "cjs" },
+  { input: "workerThread", format: "umd", minify: false, ext: "cjs" },
+  { input: "workerThread", format: "umd", minify: true, ext: "cjs" },
 ].map(config);

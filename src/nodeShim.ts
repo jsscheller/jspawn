@@ -1,6 +1,4 @@
-import { Context } from "./context";
-import * as wasiFS from "./wasiFS";
-import * as wasi from "./wasi/index";
+import { FileSystem, constants } from "./fileSystem";
 import { unreachable } from "./utils";
 
 export class NodeShim {
@@ -8,8 +6,9 @@ export class NodeShim {
   require: any;
   __dirname: any;
   Buffer: any;
+  wasmBuf?: any;
 
-  constructor(ctx: Context) {
+  constructor(fs: FileSystem, nodePath?: any) {
     this.process = {
       // @ts-ignore
       ["versions"]: {
@@ -24,7 +23,7 @@ export class NodeShim {
       // @ts-ignore
       ["binding"](name: string) {
         if (name === "constants") {
-          return wasiFS.constants;
+          return constants;
         } else {
           return {};
         }
@@ -35,39 +34,34 @@ export class NodeShim {
       },
     };
 
-    const fs = {
-      ["readSync"]: wasiFS.readSync,
-      ["writeSync"]: wasiFS.writeSync,
-      ["fstatSync"]: wasiFS.fstatSync,
-      ["openSync"]: wasiFS.openSync,
-      ["closeSync"]: wasiFS.closeSync,
-      ["readlinkSync"]: wasiFS.readlinkSync,
-      ["symlinkSync"]: wasiFS.symlinkSync,
-      ["readdirSync"]: wasiFS.readdirSync,
-      ["rmdirSync"]: wasiFS.rmdirSync,
-      ["unlinkSync"]: wasiFS.unlinkSync,
-      ["renameSync"]: wasiFS.renameSync,
-      ["writeFileSync"]: wasiFS.writeFileSync,
-      ["mkdirSync"]: wasiFS.mkdirSync,
-      ["truncateSync"]: wasiFS.truncateSync,
-      ["utimesSync"]: wasiFS.utimesSync,
-      ["chmodSync"]: wasiFS.chmodSync,
-      ["lstatSync"]: wasiFS.lstatSync,
+    const fsMethods = {
+      ["readSync"]: fs.readSync,
+      ["writeSync"]: fs.writeSync,
+      ["fstatSync"]: fs.fstatSync,
+      ["openSync"]: fs.openSync,
+      ["closeSync"]: fs.closeSync,
+      ["readlinkSync"]: fs.readlinkSync,
+      ["symlinkSync"]: fs.symlinkSync,
+      ["readdirSync"]: fs.readdirSync,
+      ["rmdirSync"]: fs.rmdirSync,
+      ["unlinkSync"]: fs.unlinkSync,
+      ["renameSync"]: fs.renameSync,
+      ["writeFileSync"]: fs.writeFileSync,
+      ["mkdirSync"]: fs.mkdirSync,
+      ["truncateSync"]: fs.truncateSync,
+      ["utimesSync"]: fs.utimesSync,
+      ["chmodSync"]: fs.chmodSync,
+      ["lstatSync"]: fs.lstatSync,
+      ["readFileSync"]: () => {
+        const buf = this.wasmBuf;
+        delete this.wasmBuf;
+        if (!buf) unreachable();
+        return buf;
+      },
     };
-    const boundFs = Object.entries(fs).reduce(
+    const boundFs = Object.entries(fsMethods).reduce(
       (acc: { [key: string]: any }, [key, val]) => {
-        acc[key] = function () {
-          try {
-            // @ts-ignore
-            return val.apply(null, [ctx, ...arguments]);
-          } catch (err) {
-            if (typeof err === "number") {
-              throw { ["code"]: "E" + wasi.errnoName(err) };
-            } else {
-              throw err;
-            }
-          }
-        };
+        acc[key] = val.bind(fs);
         return acc;
       },
       {}
@@ -90,12 +84,12 @@ export class NodeShim {
       },
     };
 
-    this.require = function (mod: string) {
+    this.require = function (mod: string): any {
       switch (mod) {
         case "fs":
           return boundFs;
         case "path":
-          return path;
+          return nodePath || path;
         case "child_process":
           return child_process;
         default:
@@ -115,5 +109,19 @@ export class NodeShim {
         return buf;
       },
     };
+
+    // `instantiateStreaming` is required or else emscripten tries reading from the filesystem.
+    if (!WebAssembly.instantiateStreaming) {
+      WebAssembly.instantiateStreaming = async function (
+        src: PromiseLike<Response> | Response,
+        imports: any
+      ): Promise<any> {
+        if ((src as PromiseLike<Response>).then) {
+          src = await src;
+        }
+        const abuf = await (src as Response).arrayBuffer();
+        return WebAssembly.instantiate(abuf, imports);
+      };
+    }
   }
 }

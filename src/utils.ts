@@ -32,14 +32,6 @@ export function resizeBuffer(
   return buf;
 }
 
-export class Cell<T> {
-  value: T;
-
-  constructor(value: T) {
-    this.value = value;
-  }
-}
-
 export class ExitStatus extends Error {
   code: number;
 
@@ -58,15 +50,41 @@ export function isNode(): boolean {
   return !!globalThis["process"];
 }
 
-export function isMainThread(): boolean {
-  if (isNode()) {
-    try {
-      // @ts-ignore
-      return require("worker_threads")["isMainThread"];
-    } catch (_) {
-      return true;
-    }
-  } else {
-    return !!globalThis.document;
+export class Deferred<T> {
+  promise: Promise<T>;
+  resolve!: (t: T) => void;
+  reject!: (err: any) => void;
+
+  constructor() {
+    this.promise = new Promise((resolve, reject) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+  }
+}
+
+export function isPlainObject(x: any): boolean {
+  try {
+    return Object.getPrototypeOf(x) === Object.prototype;
+  } catch (_) {
+    return false;
+  }
+}
+
+export function isURL(x: any): boolean {
+  try {
+    new URL(x);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function loadNodeModule(name: string): Promise<any> {
+  try {
+    return await import(name);
+  } catch (_) {
+    // @ts-ignore
+    return require(name);
   }
 }

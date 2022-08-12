@@ -1,44 +1,17 @@
-import { FDTable } from "./fdTable";
-import { Memory } from "./memory";
-import { RegularFile, Dir } from "./file";
-import { Cell, isNode, ExitStatus } from "./utils";
-import { snapshotPreview1 } from "./wasi/index";
+import { Memory } from "../memory";
+import { FileSystem } from "../fileSystem";
+import { ExitStatus } from "../utils";
+import * as t from "./types";
 
 export class Context {
-  fdTable!: FDTable;
+  fs!: FileSystem;
   mem!: Memory;
   envs!: string[];
   args!: string[];
-  currentDir: Cell<string>;
-  rootDir!: Dir;
-  enc: TextEncoder;
 
-  constructor() {
-    this.currentDir = new Cell("/");
-
-    const relPreopens: { [path: string]: Dir } = {};
-    for (const path of ["", "..", "~"]) {
-      const dir = new Dir({}, path, this.currentDir, true);
-      if (!path) {
-        this.rootDir = dir;
-      }
-      relPreopens[path] = dir;
-    }
-
-    if (!isNode()) {
-      const stdio = [new RegularFile(), new RegularFile(), new RegularFile()];
-      this.fdTable = new FDTable(stdio, relPreopens);
-    }
-    this.enc = new TextEncoder();
-  }
-
-  stringToBytes(s: string): Uint8Array {
-    return this.enc.encode(s);
-  }
-
-  wasiImport(): any {
+  bind(imports: any): any {
     const ctx = this;
-    return Object.entries(snapshotPreview1).reduce(
+    return Object.entries(imports).reduce(
       (acc: { [key: string]: any }, [key, val]) => {
         acc[key] = function () {
           const args = [ctx, ...arguments];
@@ -58,6 +31,10 @@ export class Context {
       },
       {}
     );
+  }
+
+  readPath(ptr: number, len: number): string {
+    return t.string_t.get(this.mem, ptr, len);
   }
 
   start(

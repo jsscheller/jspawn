@@ -12,7 +12,7 @@ module.exports = function (config) {
         watched: false,
       },
       {
-        pattern: "dist/**/*.@(mjs|js)",
+        pattern: "dist/**/*.@(mjs|js|wasm)",
         included: false,
       },
       {
@@ -20,6 +20,17 @@ module.exports = function (config) {
         type: "module",
       },
     ],
+    plugins: [
+      // Load default karma plugins
+      "karma-*",
+      {
+        "middleware:cross-origin-isolation": [
+          "factory",
+          CrossOriginIsolationMiddlewareFactory,
+        ],
+      },
+    ],
+    beforeMiddleware: ["cross-origin-isolation"],
     browsers: ["Chrome"],
     reporters: ["progress"],
     port: 9876,
@@ -33,3 +44,11 @@ module.exports = function (config) {
 
   config.set(configuration);
 };
+
+function CrossOriginIsolationMiddlewareFactory(config) {
+  return function crossOriginIsolation(req, res, next) {
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    next();
+  };
+}

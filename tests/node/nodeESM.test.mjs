@@ -1,5 +1,4 @@
-import { subprocess } from "../../dist/esm/jspawn.mjs";
-import * as fs from "fs/promises";
+import { subprocess, fs } from "../../dist/esm/jspawn.mjs";
 import { expect } from "chai";
 
 describe("node ESM tests", function () {

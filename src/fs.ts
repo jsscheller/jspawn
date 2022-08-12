@@ -1,11 +1,52 @@
 import {
-  toWorker as channel,
+  request,
   MessageType,
   FSRequestType,
   FSResponse,
   SerializedURL,
-} from "./workerChannel";
-import { isNode } from "./utils";
+  terminateWorkers,
+} from "./worker";
+import { isNode, isPlainObject, isURL, loadNodeModule } from "./utils";
+
+type MountSource = string | Blob | Uint8Array | { [path: string]: any };
+
+export async function mount(source: MountSource, virtualPath: string) {
+  if (isNode()) {
+    source = await resolveNodePaths(source);
+  }
+  await unwrap<void>(
+    request<FSResponse>({
+      type: MessageType.FSRequest,
+      fsType: FSRequestType.Mount,
+      args: [source, virtualPath],
+    })
+  );
+}
+
+async function resolveNodePaths(source: MountSource): Promise<MountSource> {
+  if (typeof source === "string" && !isURL(source)) {
+    const nodePath = await loadNodeModule("path");
+    let path = nodePath["resolve"](source);
+    const nodeFS = await loadNodeModule("fs/promises");
+    const stats = await nodeFS["stat"](path);
+    if (!stats["isDirectory"]()) {
+      path = "file://" + path;
+    }
+    return path;
+  } else if (isPlainObject(source)) {
+    const acc: { [k: string]: MountSource } = {};
+    for (const [key, val] of Object.entries(source)) {
+      acc[key] = await resolveNodePaths(val);
+    }
+    return acc;
+  } else {
+    return source;
+  }
+}
+
+export async function clear() {
+  terminateWorkers();
+}
 
 declare type WriteFileOptions = {
   transfer?: boolean;
@@ -15,29 +56,22 @@ export async function writeFile(
   path: string,
   data: string | Uint8Array | Blob | URL,
   opts: WriteFileOptions = {}
-): Promise<void> {
-  if (isNode()) {
-    await nodeFS((fs: any) => {
-      // @ts-ignore
-      return fs["writeFile"](path, data);
-    });
-  } else {
-    const transfers =
-      opts.transfer && data instanceof Uint8Array ? [data.buffer] : [];
-    const serData =
-      data instanceof URL ? ({ url: data.toString() } as SerializedURL) : data;
-    unwrap<void>(
-      channel().req<FSResponse>(
-        {
-          type: MessageType.FSRequest,
-          fsType: FSRequestType.WriteFile,
-          args: [path, serData],
-        },
-        transfers
-      ),
-      { ["path"]: path }
-    );
-  }
+) {
+  const transfers =
+    opts.transfer && data instanceof Uint8Array ? [data.buffer] : [];
+  const serData =
+    data instanceof URL ? ({ url: data.toString() } as SerializedURL) : data;
+  await unwrap<void>(
+    request<FSResponse>(
+      {
+        type: MessageType.FSRequest,
+        fsType: FSRequestType.WriteFile,
+        args: [path, serData],
+      },
+      transfers
+    ),
+    { ["path"]: path }
+  );
 }
 
 declare type ReadFileToBlobOptions = {
@@ -48,89 +82,62 @@ export async function readFileToBlob(
   path: string,
   opts: ReadFileToBlobOptions = {}
 ): Promise<Blob> {
-  if (isNode()) {
-    const buf = await nodeFS((fs: any) => {
-      // @ts-ignore
-      return fs["readFile"](path);
-    });
-    return nodeBuffer((buffer: any) => {
-      // @ts-ignore
-      return new buffer["Blob"]([buf], opts);
-    });
-  } else {
-    return unwrap<Blob>(
-      channel().req<FSResponse>({
-        type: MessageType.FSRequest,
-        fsType: FSRequestType.ReadFileToBlob,
-        args: [path, opts.type],
-      }),
-      { ["path"]: path }
-    );
-  }
+  return unwrap<Blob>(
+    request<FSResponse>({
+      type: MessageType.FSRequest,
+      fsType: FSRequestType.ReadFileToBlob,
+      args: [path, opts.type],
+    }),
+    { ["path"]: path }
+  );
 }
 
-export async function mkdir(path: string): Promise<void> {
-  if (isNode()) {
-    await nodeFS((fs: any) => {
-      // @ts-ignore
-      return fs["mkdir"](path);
-    });
-  } else {
-    return unwrap<void>(
-      channel().req<FSResponse>({
-        type: MessageType.FSRequest,
-        fsType: FSRequestType.Mkdir,
-        args: [path],
-      }),
-      { ["path"]: path }
-    );
-  }
+export async function readFile(path: string): Promise<ArrayBuffer> {
+  const blob = await readFileToBlob(path);
+  return blob.arrayBuffer();
+}
+
+export async function mkdir(path: string) {
+  await unwrap<void>(
+    request<FSResponse>({
+      type: MessageType.FSRequest,
+      fsType: FSRequestType.Mkdir,
+      args: [path],
+    }),
+    { ["path"]: path }
+  );
 }
 
 export async function readdir(path: string): Promise<string[]> {
-  if (isNode()) {
-    return nodeFS((fs: any) => {
-      // @ts-ignore
-      return fs["readdir"](path);
-    });
-  } else {
-    return unwrap<string[]>(
-      channel().req<FSResponse>({
-        type: MessageType.FSRequest,
-        fsType: FSRequestType.Readdir,
-        args: [path],
-      }),
-      { ["path"]: path }
-    );
-  }
+  return unwrap<string[]>(
+    request<FSResponse>({
+      type: MessageType.FSRequest,
+      fsType: FSRequestType.Readdir,
+      args: [path],
+    }),
+    { ["path"]: path }
+  );
 }
 
 declare type RmdirOptions = {
   recursive?: boolean;
 };
 
-export async function rmdir(
-  path: string,
-  opts: RmdirOptions = {}
-): Promise<void> {
-  if (isNode()) {
-    return nodeFS((fs: any) => {
-      // @ts-ignore
-      return fs["rmdir"](path, opts);
-    });
-  } else {
-    return unwrap<void>(
-      channel().req<FSResponse>({
-        type: MessageType.FSRequest,
-        fsType: FSRequestType.Rmdir,
-        args: [path, opts.recursive],
-      }),
-      { ["path"]: path }
-    );
-  }
+export async function rmdir(path: string, opts: RmdirOptions = {}) {
+  await unwrap<void>(
+    request<FSResponse>({
+      type: MessageType.FSRequest,
+      fsType: FSRequestType.Rmdir,
+      args: [path, opts.recursive],
+    }),
+    { ["path"]: path }
+  );
 }
 
-async function unwrap<T>(res: Promise<FSResponse>, errCtx: any): Promise<T> {
+async function unwrap<T>(
+  res: Promise<FSResponse>,
+  errCtx: any = {}
+): Promise<T> {
   const { ok, err } = await res;
   if (err) {
     const fsErr = new Error(err["code"] || "FSError");
@@ -138,23 +145,5 @@ async function unwrap<T>(res: Promise<FSResponse>, errCtx: any): Promise<T> {
     throw fsErr;
   } else {
     return ok as T;
-  }
-}
-
-function nodeFS<T>(cb: (fs: any) => Promise<T>): Promise<T> {
-  return loadModule("fs/promises", cb);
-}
-
-function nodeBuffer<T>(cb: (buffer: any) => Promise<T>): Promise<T> {
-  return loadModule("buffer", cb);
-}
-
-function loadModule<T>(name: string, cb: (x: any) => Promise<T>): Promise<T> {
-  try {
-    return import(name).then(cb);
-  } catch (_) {
-    // @ts-ignore
-    const x = require(name);
-    return cb(x);
   }
 }

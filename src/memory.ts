@@ -2,10 +2,12 @@ export class Memory {
   _dv?: DataView;
   _u8?: Uint8Array;
   _u32?: Uint32Array;
-  src?: WebAssembly.Instance | ArrayBuffer;
+  src: WebAssembly.Instance | WebAssembly.Memory;
+  isShared: boolean;
 
-  constructor(src?: WebAssembly.Instance | ArrayBuffer) {
+  constructor(src: WebAssembly.Instance | WebAssembly.Memory) {
     this.src = src;
+    this.isShared = src instanceof WebAssembly.Memory;
   }
 
   get dv() {
@@ -24,11 +26,16 @@ export class Memory {
   }
 
   refreshMemory() {
-    if (!this._dv || this._dv.buffer.byteLength === 0) {
+    if (
+      !this._dv ||
+      this._dv.buffer.byteLength === 0 ||
+      (this.isShared &&
+        (this.src as WebAssembly.Memory).buffer.byteLength !== this._u8!.length)
+    ) {
       const src =
-        this.src instanceof ArrayBuffer
-          ? this.src
-          : (this.src!.exports["memory"] as unknown as Uint8Array).buffer;
+        this.src instanceof WebAssembly.Instance
+          ? (this.src.exports["memory"] as unknown as Uint8Array).buffer
+          : this.src.buffer;
       this._dv = new DataView(src);
       this._u8 = new Uint8Array(src);
       this._u32 = new Uint32Array(src);

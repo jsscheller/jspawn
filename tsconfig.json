@@ -6,6 +6,12 @@
     "moduleResolution": "node",
     "declaration": true,
     "lib": ["esnext", "dom"],
-    "strict": true
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitThis": true,
+    "noImplicitAny": true
   }
 }

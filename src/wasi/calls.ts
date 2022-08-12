@@ -1,9 +1,9 @@
-import { Context } from "../context";
+import { Context } from "./context";
 import * as t from "./types";
 import * as e from "./errno";
 import * as c from "./constants";
 import { ExitStatus } from "../utils";
-import { IOVecs } from "../ioVecs";
+import { Memory } from "../memory";
 
 export const snapshotPreview1 = {
   ["args_get"]: function (ctx: Context, argvPtr: number, argvBufPtr: number) {
@@ -60,17 +60,18 @@ export const snapshotPreview1 = {
     offset: bigint,
     len: bigint
   ) {
-    ctx.fdTable.getRegularFile(fd).allocate(offset, len);
+    ctx.fs.fallocateSync(fd, offset, len);
   },
   ["fd_close"]: function (ctx: Context, fd: number) {
-    ctx.fdTable.remove(fd);
+    ctx.fs.closeSync(fd);
   },
   ["fd_datasync"]: function (ctx: Context, fd: number) {
     // Our filesystem has no concept of syncing to disk.
-    ctx.fdTable.get(fd);
+    ctx.fs.fstatSync(fd);
   },
   ["fd_fdstat_get"]: function (ctx: Context, fd: number, fdstatPtr: number) {
-    const fdstat = ctx.fdTable.get(fd).fdstat();
+    const filestat = ctx.fs.fstatSync(fd) as t.Filestat;
+    const fdstat = new t.Fdstat([filestat.filetype, 0, BigInt(0), BigInt(0)]);
     t.fdstat_t.set(ctx.mem, fdstatPtr, fdstat);
   },
   ["fd_fdstat_set_flags"]: function (
@@ -92,11 +93,11 @@ export const snapshotPreview1 = {
     fd: number,
     filestatPtr: number
   ) {
-    const filestat = ctx.fdTable.getFile(fd).filestat();
+    const filestat = ctx.fs.fstatSync(fd) as t.Filestat;
     t.filestat_t.set(ctx.mem, filestatPtr, filestat);
   },
   ["fd_filestat_set_size"]: function (ctx: Context, fd: number, size: bigint) {
-    ctx.fdTable.getRegularFile(fd).truncate(size);
+    ctx.fs.ftruncateSync(fd, size);
   },
   ["fd_filestat_set_times"]: function (
     _fd: number,
@@ -112,7 +113,10 @@ export const snapshotPreview1 = {
     nreadPtr: number
   ) {
     const iovs = new IOVecs(iovsPtr, iovsLen, ctx.mem);
-    const nread = ctx.fdTable.get(fd).read(iovs);
+    let nread = 0;
+    for (const buf of iovs.bufs) {
+      nread += ctx.fs.readSync(fd, buf.buffer, buf.byteOffset, buf.length);
+    }
     t.size_t.set(ctx.mem, nreadPtr, nread);
   },
   ["fd_pread"]: function (
@@ -124,7 +128,16 @@ export const snapshotPreview1 = {
     nreadPtr: number
   ) {
     const iovs = new IOVecs(iovsPtr, iovsLen, ctx.mem);
-    const nread = ctx.fdTable.get(fd).read(iovs, offset);
+    let nread = 0;
+    for (const buf of iovs.bufs) {
+      nread += ctx.fs.readSync(
+        fd,
+        buf.buffer,
+        buf.byteOffset,
+        buf.length,
+        offset
+      );
+    }
     t.size_t.set(ctx.mem, nreadPtr, nread);
   },
   ["fd_write"]: function (
@@ -135,7 +148,10 @@ export const snapshotPreview1 = {
     nwrittenPtr: number
   ) {
     const iovs = new IOVecs(iovsPtr, iovsLen, ctx.mem);
-    const nwritten = ctx.fdTable.get(fd).write(iovs);
+    let nwritten = 0;
+    for (const buf of iovs.bufs) {
+      nwritten += ctx.fs.writeSync(fd, buf.buffer, buf.byteOffset, buf.length);
+    }
     t.size_t.set(ctx.mem, nwrittenPtr, nwritten);
   },
   ["fd_pwrite"]: function (
@@ -147,11 +163,21 @@ export const snapshotPreview1 = {
     nwrittenPtr: number
   ) {
     const iovs = new IOVecs(iovsPtr, iovsLen, ctx.mem);
-    const nwritten = ctx.fdTable.get(fd).write(iovs, offset);
+    let nwritten = 0;
+    for (const buf of iovs.bufs) {
+      nwritten += ctx.fs.writeSync(
+        fd,
+        buf.buffer,
+        buf.byteOffset,
+        buf.length,
+        offset
+      );
+    }
     t.size_t.set(ctx.mem, nwrittenPtr, nwritten);
   },
   ["fd_prestat_get"]: function (ctx: Context, fd: number, prestatPtr: number) {
-    const prestat = ctx.fdTable.get(fd).prestat();
+    const name = ctx.fs.prestatDirNameSync(fd);
+    const prestat = new t.Prestat([0, name.length]);
     t.prestat_t.set(ctx.mem, prestatPtr, prestat);
   },
   ["fd_prestat_dir_name"]: function (
@@ -160,11 +186,11 @@ export const snapshotPreview1 = {
     pathPtr: number,
     pathLen: number
   ) {
-    const name = ctx.fdTable.get(fd).prestatDirName();
+    const name = ctx.fs.prestatDirNameSync(fd);
     t.string_t.set(ctx.mem, pathPtr, name, pathLen);
   },
   ["fd_renumber"]: function (ctx: Context, from: number, to: number) {
-    ctx.fdTable.renumber(from, to);
+    ctx.fs.renumberSync(from, to);
   },
   ["fd_seek"]: function (
     ctx: Context,
@@ -173,15 +199,15 @@ export const snapshotPreview1 = {
     whence: number,
     filesizePtr: number
   ) {
-    const newOffset = ctx.fdTable.get(fd).seek(offset, whence);
+    const newOffset = ctx.fs.seekSync(fd, offset, whence);
     t.filesize_t.set(ctx.mem, filesizePtr, newOffset);
   },
   ["fd_sync"]: function (ctx: Context, fd: number) {
     // Our filesystem has no concept of syncing to disk.
-    ctx.fdTable.get(fd);
+    ctx.fs.fstatSync(fd);
   },
   ["fd_tell"]: function (ctx: Context, fd: number, offsetPtr: number) {
-    const offset = ctx.fdTable.get(fd).seek(BigInt(0), c.WHENCE_CUR);
+    const offset = ctx.fs.seekSync(fd, BigInt(0), c.WHENCE_CUR);
     t.filesize_t.set(ctx.mem, offsetPtr, offset);
   },
   ["fd_readdir"]: function (
@@ -192,12 +218,18 @@ export const snapshotPreview1 = {
     cookie: bigint,
     bufUsedPtr: number
   ) {
-    const ents = ctx.fdTable.getDir(fd).read(cookie, bufLen);
+    const ents = ctx.fs.freaddirSync(fd, cookie);
     let bufUsed = 0;
     for (const ent of ents) {
+      const dirent = new t.Dirent([
+        ent.cookie + BigInt(1),
+        BigInt(0),
+        ent.name.length,
+        ent.type,
+      ]);
       // Copy as many bytes of the dirent as we can, up to the end of the buffer
       const direntCopyLen = Math.min(t.dirent_t.size, bufLen - bufUsed);
-      t.dirent_t.set(ctx.mem, bufPtr, ent, direntCopyLen);
+      t.dirent_t.set(ctx.mem, bufPtr, dirent, direntCopyLen);
 
       // If the dirent struct wasnt copied entirely, return that we filled the buffer, which
       // tells libc that we're not at EOF.
@@ -210,12 +242,12 @@ export const snapshotPreview1 = {
       bufUsed += direntCopyLen;
 
       // Copy as many bytes of the name as we can, up to the end of the buffer
-      const nameCopyLen = Math.min(ent.name.length, bufLen - bufUsed);
-      t.string_t.set(ctx.mem, bufPtr, ent.name, nameCopyLen);
+      const nameCopyLen = Math.min(dirent.name.length, bufLen - bufUsed);
+      t.string_t.set(ctx.mem, bufPtr, dirent.name, nameCopyLen);
 
       // If the dirent struct wasn't copied entirely, return that we filled the buffer, which
       // tells libc that we're not at EOF
-      if (nameCopyLen < ent.name.length) {
+      if (nameCopyLen < dirent.name.length) {
         bufUsed = bufLen;
         break;
       }
@@ -226,26 +258,23 @@ export const snapshotPreview1 = {
   },
   ["path_create_directory"]: function (
     ctx: Context,
-    dirFd: number,
+    _dirFd: number,
     pathPtr: number,
     pathLen: number
   ) {
-    ctx.fdTable
-      .getDir(dirFd)
-      .createDir(t.string_t.get(ctx.mem, pathPtr, pathLen));
+    const path = ctx.readPath(pathPtr, pathLen);
+    ctx.fs.mkdirSync(path);
   },
   ["path_filestat_get"]: function (
     ctx: Context,
-    dirFd: number,
-    flags: number,
+    _dirFd: number,
+    _flags: number,
     pathPtr: number,
     pathLen: number,
     filestatPtr: number
   ) {
-    const filestat = ctx.fdTable
-      .getDir(dirFd)
-      .lookup(t.string_t.get(ctx.mem, pathPtr, pathLen), flags)
-      .filestat();
+    const path = ctx.readPath(pathPtr, pathLen);
+    const filestat = ctx.fs.lstatSync(path);
     t.filestat_t.set(ctx.mem, filestatPtr, filestat);
   },
   ["path_filestat_set_times"]: function (
@@ -258,39 +287,31 @@ export const snapshotPreview1 = {
     _fstflags: number
   ) {},
   ["path_link"]: function (
-    ctx: Context,
-    oldFd: number,
-    oldFlags: number,
-    oldPathPtr: number,
-    oldPathLen: number,
-    newFd: number,
-    newPathPtr: number,
-    newPathLen: number
+    _ctx: Context,
+    _oldFd: number,
+    _oldFlags: number,
+    _oldPathPtr: number,
+    _oldPathLen: number,
+    _newFd: number,
+    _newPathPtr: number,
+    _newPathLen: number
   ) {
-    const oldDir = ctx.fdTable.getDir(oldFd);
-    const newDir = ctx.fdTable.getDir(newFd);
-    const file = oldDir.lookup(
-      t.string_t.get(ctx.mem, oldPathPtr, oldPathLen),
-      oldFlags
-    );
-    newDir.insert(t.string_t.get(ctx.mem, newPathPtr, newPathLen), file);
+    throw e.ERRNO_NOSYS;
   },
   ["path_open"]: function (
     ctx: Context,
-    dirFd: number,
-    dirFlags: number,
+    _dirFd: number,
+    _dirFlags: number,
     pathPtr: number,
     pathLen: number,
     oflags: number,
     _fsRightsBaseRaw: bigint,
     _fsRightsInheritingRaw: bigint,
-    _fdFlagsRaw: number,
+    fdflags: number,
     fdPtr: number
   ) {
-    const file = ctx.fdTable
-      .getDir(dirFd)
-      .open(t.string_t.get(ctx.mem, pathPtr, pathLen), dirFlags, oflags);
-    const fd = ctx.fdTable.push(file);
+    const path = ctx.readPath(pathPtr, pathLen);
+    const fd = ctx.fs.openSync(path, oflags, fdflags);
     t.fd_t.set(ctx.mem, fdPtr, fd);
   },
   ["path_readlink"]: function (
@@ -306,30 +327,25 @@ export const snapshotPreview1 = {
   },
   ["path_remove_directory"]: function (
     ctx: Context,
-    dirFd: number,
+    _dirFd: number,
     pathPtr: number,
     pathLen: number
   ) {
-    ctx.fdTable
-      .getDir(dirFd)
-      .removeDir(t.string_t.get(ctx.mem, pathPtr, pathLen));
+    const path = ctx.readPath(pathPtr, pathLen);
+    ctx.fs.rmdirSync(path);
   },
   ["path_rename"]: function (
     ctx: Context,
-    srcDirFd: number,
+    _srcDirFd: number,
     srcPathPtr: number,
     srcPathLen: number,
-    dstDirFd: number,
+    _dstDirFd: number,
     dstPathPtr: number,
     dstPathLen: number
   ) {
-    ctx.fdTable
-      .getDir(srcDirFd)
-      .rename(
-        t.string_t.get(ctx.mem, srcPathPtr, srcPathLen),
-        ctx.fdTable.getDir(dstDirFd),
-        t.string_t.get(ctx.mem, dstPathPtr, dstPathLen)
-      );
+    const srcPath = ctx.readPath(srcPathPtr, srcPathLen);
+    const dstPath = ctx.readPath(dstPathPtr, dstPathLen);
+    ctx.fs.renameSync(srcPath, dstPath);
   },
   ["path_symlink"]: function (
     _ctx: Context,
@@ -341,13 +357,12 @@ export const snapshotPreview1 = {
   },
   ["path_unlink_file"]: function (
     ctx: Context,
-    dirFd: number,
+    _dirFd: number,
     pathPtr: number,
     pathLen: number
   ) {
-    ctx.fdTable
-      .getDir(dirFd)
-      .removeFile(t.string_t.get(ctx.mem, pathPtr, pathLen));
+    const path = ctx.readPath(pathPtr, pathLen);
+    ctx.fs.unlinkSync(path);
   },
   ["poll_oneoff"]: function (
     _ctx: Context,
@@ -400,3 +415,29 @@ export const snapshotPreview1 = {
     throw e.ERRNO_NOSYS;
   },
 };
+
+class IOVecs {
+  bufs: Uint8Array[];
+
+  constructor(
+    ptr: number | Uint8Array | Uint8Array[],
+    len?: number,
+    mem?: Memory
+  ) {
+    if (ptr instanceof Uint8Array) {
+      this.bufs = [ptr];
+    } else if (Array.isArray(ptr)) {
+      this.bufs = ptr;
+    } else {
+      this.bufs = [];
+      for (let i = 0; i < len!; i++) {
+        const [iovecBufPtr, iovecBufLen] = t.iovec_t.get(mem!, ptr)
+          .values as number[];
+        this.bufs.push(
+          mem!.u8.subarray(iovecBufPtr, iovecBufPtr + iovecBufLen)
+        );
+        ptr += t.iovec_t.size;
+      }
+    }
+  }
+}

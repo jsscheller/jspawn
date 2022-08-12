@@ -1,346 +1,441 @@
-import { NodeShim } from "./nodeShim";
-import {
-  FromWorker,
-  ToWorkerMessage,
-  MessageType,
-  SubprocessRun,
-  FSRequest,
-  FSRequestType,
-  fromWorker as channel,
-  SerializedURL,
-} from "./workerChannel";
-import { Context } from "./context";
-import { resizeBuffer, isNode, isMainThread } from "./utils";
-import * as wasiFS from "./wasiFS";
-import * as wasi from "./wasi/index";
+import { isNode, Deferred, loadNodeModule } from "./utils";
+import { FileSystem } from "./fileSystem";
 
-// TODO: only add listener if this is THE worker thread.
-if (!isMainThread()) {
-  if (isNode()) {
-    // @ts-ignore
-    require("worker_threads")["parentPort"]["on"]("message", onMessage);
-  } else {
-    self.onmessage = onMessage;
-  }
-}
+export const JSPAWN_WORKER_THREAD = "jspawnWorkerThread";
 
-async function onMessage(e: MessageEvent) {
-  const msg = (isNode() ? e : e.data) as ToWorkerMessage;
-  await handleMessage(msg);
-}
-
-let CTX: Context;
-let NODE_SHIM: NodeShim;
-export async function handleMessage(msg: ToWorkerMessage) {
-  if (!CTX) {
-    CTX = new Context();
-    NODE_SHIM = new NodeShim(CTX);
-  }
-
-  switch (msg.msg.type) {
-    case MessageType.SubprocessRun:
-      await subprocessRun(msg.msg, CTX, NODE_SHIM);
-      break;
-    case MessageType.FSRequest:
-      await fsReqeust(msg.req!, msg.msg, CTX);
-      break;
-  }
-}
-
-async function subprocessRun(
-  msg: SubprocessRun,
-  ctx: Context,
-  nodeShim: NodeShim
+export async function subscribe(
+  createMsg: (topic: number) => Message,
+  handler: (msg: Message) => void
 ) {
-  let mod: WebAssembly.Module;
-  const binaryPath = await resolveBinaryPath(msg.program, msg.wasmPath);
-  if (!binaryPath) {
-    return channel().pub(
-      msg.topic,
-      {
-        type: MessageType.SubprocessRunError,
-        message: `unable to resolve WASM file for program: ${msg.program}`,
-      },
-      true
-    );
-  }
+  const worker = await getWorker();
+
+  const topic = worker.channel.createTopic();
+  worker.channel.send(createMsg(topic));
+  await worker.channel.sub(topic, handler);
+
+  WORKER_POOL!.reclaim(worker);
+
   if (isNode()) {
-    // @ts-ignore
-    const buf = await require("fs/promises")["readFile"](binaryPath!);
-    // @ts-ignore
-    mod = await WebAssembly.compile(buf);
-  } else {
-    const src = await fetch(binaryPath);
-    if (WebAssembly.compileStreaming) {
-      mod = await WebAssembly.compileStreaming(src);
-    } else {
-      mod = await WebAssembly.compile(await src.arrayBuffer());
-    }
+    worker.terminate();
+  }
+}
+
+export async function request<T>(msg: Message, transfers?: any[]): Promise<T> {
+  const worker = await getWorker();
+
+  const ret = await worker.channel.req<T>(msg, transfers);
+
+  WORKER_POOL!.reclaim(worker);
+
+  if (isNode()) {
+    worker.terminate();
   }
 
-  const stdout = new Stdout((buf: Uint8Array) => {
-    channel().pub(msg.topic, {
-      type: MessageType.SubprocessRunStdout,
-      buf,
-    });
-  });
-  const stderr = new Stdout((buf: Uint8Array) => {
-    channel().pub(msg.topic, {
-      type: MessageType.SubprocessRunStderr,
-      buf,
-    });
-  });
-  let exitCode;
+  return ret;
+}
 
-  if (
-    !WebAssembly.Module.exports(mod).find(
-      (exp) => exp.name === "_start" || exp.name === "_initialize"
-    )
-  ) {
-    // Assuming this is Emscripten if no WASI exports are found.
-    const jsPath = binaryPath.replace(/wasm$/, "js");
-    let Module: any;
+let WORKER_POOL: WorkerPool | undefined;
+
+async function getWorker(): Promise<WorkerExt> {
+  if (!WORKER_POOL) {
+    let maxWorkers;
     if (isNode()) {
-      // @ts-ignore
-      const nodePath = require("path");
-      // @ts-ignore
-      Module = require(nodePath["isAbsolute"](jsPath)
-        ? jsPath
-        : nodePath["join"](process["cwd"](), jsPath));
+      maxWorkers = (await loadNodeModule("os"))["cpus"]().length;
     } else {
-      const js = await (await fetch(jsPath)).text();
-      const func = new Function(
-        `"use strict"; return function(process, require, __dirname, Buffer) { var importScripts; var exports = {}; ${js} return exports.Module; }`
-      )();
-      Module = func(
-        nodeShim.process,
-        nodeShim.require,
-        nodeShim.__dirname,
-        nodeShim.Buffer
-      );
+      maxWorkers = navigator.hardwareConcurrency || 2;
     }
+    WORKER_POOL = new WorkerPool(maxWorkers);
+  }
+  return WORKER_POOL.next();
+}
 
-    const stdinCallback = () => null;
-    const stdoutCallback = stdout.push.bind(stdout);
-    const stderrCallback = stderr.push.bind(stderr);
+export function terminateWorkers() {
+  if (WORKER_POOL) {
+    for (const worker of WORKER_POOL!.workers) {
+      worker.worker.terminateSync();
+    }
+  }
+  WORKER_POOL = undefined;
+}
 
+type WorkerState = {
+  worker: WorkerExt;
+  idle?: boolean;
+};
+
+let WORKER_PATH!: string;
+// UMD/nodejs note:
+// Normally accessing `import.meta` doesn't work in non-modules.
+// However, it gets replaced with an equivalent value in the build step when targeting UMD.
+// @ts-ignore
+try {
+  // @ts-ignore
+  WORKER_PATH = import.meta.url;
+} catch (_) {
+  if (globalThis.document) {
     // @ts-ignore
-    const emMod = await Module({
-      ["noInitialRun"]: true,
-      ["noFSInit"]: true,
-      ["locateFile"]: () => binaryPath,
-      ["preRun"]: (mod: any) => {
-        Object.assign(mod["ENV"], msg.env);
-      },
-    });
+    WORKER_PATH = document.currentScript!.src;
+  } else {
+    WORKER_PATH = location.href;
+  }
+}
 
-    emMod["FS"]["setIgnorePermissions"](true);
-    emMod["FS"]["init"](stdinCallback, stdoutCallback, stderrCallback);
-    const working = "/working";
-    emMod["FS"]["mkdir"](working);
-    emMod["FS"]["mount"](emMod["NODEFS"], { root: "." }, working);
-    emMod["FS"]["chdir"](working);
+class WorkerPool {
+  queue: Deferred<WorkerExt>[];
+  workers: WorkerState[];
+  maxWorkers: number;
+  fsModule?: WebAssembly.Module;
+  fsMemory?: WebAssembly.Memory;
 
-    exitCode = emMod["callMain"](msg.args);
-    if (exitCode == null) {
-      const getExitStatus = emMod["exitStatus"];
-      if (typeof getExitStatus === "function") {
-        exitCode = getExitStatus();
+  constructor(maxWorkers: number) {
+    this.queue = [];
+    this.workers = [];
+    this.maxWorkers = maxWorkers;
+  }
+
+  next(): Promise<WorkerExt> {
+    const def = new Deferred() as Deferred<WorkerExt>;
+    this.queue.push(def);
+    this.dequeue().catch(def.reject);
+    return def.promise;
+  }
+
+  async dequeue() {
+    if (this.queue.length === 0) return;
+    const def = this.queue.shift()!;
+    let worker = this.workers.find((worker: WorkerState) => worker.idle);
+    if (!worker) {
+      if (this.workers.length === this.maxWorkers) {
+        return;
+      } else {
+        worker = { worker: await this.newWorker() } as WorkerState;
+        this.workers.push(worker);
       }
     }
-  } else {
-    const args = [msg.program].concat(msg.args);
+    worker.idle = false;
+    clearTimeout(worker.worker.terminateTimeout);
+    def!.resolve(worker.worker);
+  }
 
-    let wasiImport: any;
-    let nodeWasi: any;
+  async newWorker(): Promise<WorkerExt> {
+    let sep = "/";
     if (isNode()) {
-      // @ts-ignore
-      const WASI = require("wasi")["WASI"];
-      // @ts-ignore
-      nodeWasi = new WASI({
-        ["args"]: args,
-        ["env"]: msg.env,
-        ["preopens"]: {
-          ".": ".",
-        },
+      sep = (await loadNodeModule("path"))["sep"];
+    }
+
+    if (!this.fsModule) {
+      const wasmPath = `${WORKER_PATH.split(sep)
+        .slice(0, -2)
+        .join(sep)}${sep}fs.wasm`;
+
+      this.fsModule = await FileSystem.compile(wasmPath);
+      this.fsMemory = new WebAssembly.Memory({
+        initial: 80,
+        maximum: 16384,
+        shared: true,
       });
-      wasiImport = nodeWasi["wasiImport"];
-    } else {
-      wasiImport = ctx.wasiImport();
     }
-    const importObject = { ["wasi_snapshot_preview1"]: wasiImport };
-    const instance = await WebAssembly.instantiate(mod, importObject);
+
+    const worker = await createWorker(JSPAWN_WORKER_THREAD, sep);
+    const workerExt = new WorkerExt(worker);
+    workerExt.channel.send({
+      type: MessageType.WorkerInit,
+      fsModule: this.fsModule!,
+      fsMemory: this.fsMemory!,
+    });
+
+    return workerExt;
+  }
+
+  reclaim(worker: WorkerExt) {
+    const state = this.workers.find(
+      (item: WorkerState) => item.worker === worker
+    );
+    state!.idle = true;
+  }
+
+  remove(worker: WorkerExt) {
+    const pos = this.workers.findIndex(
+      (item: WorkerState) => item.worker === worker
+    );
+    this.workers.splice(pos, 1);
+  }
+}
+
+async function createWorker(id: string, sep: string): Promise<Worker> {
+  let worker;
+  let path = WORKER_PATH;
+  if (
+    !isNode() &&
+    /^http:|https:/.test(WORKER_PATH) &&
+    !WORKER_PATH.startsWith(location.origin)
+  ) {
+    // Support cross-origin loading.
+    const blob = await (await fetch(WORKER_PATH)).blob();
+    path = URL.createObjectURL(blob);
+  }
+
+  if (isNode()) {
+    const worker_threads = await loadNodeModule("worker_threads");
+    path =
+      path.replace(`file:${sep}${sep}`, "").split(sep).slice(0, -2).join(sep) +
+      `${sep}umd${sep}workerThread.cjs`;
+    worker = new NodeWorker(
+      new worker_threads["Worker"](path, {
+        ["workerData"]: { [id]: true },
+      })
+    ) as unknown as Worker;
+  } else {
+    let isModule = true;
+    try {
+      import.meta;
+    } catch (_) {
+      isModule = false;
+    }
+    worker = new Worker(
+      `${path}${path.includes("?") ? "&" : "?"}${id}`,
+      isModule ? { type: "module" } : undefined
+    );
+    if (path !== WORKER_PATH) {
+      URL.revokeObjectURL(path);
+    }
+  }
+  return worker;
+}
+
+class NodeWorker {
+  worker: any;
+
+  constructor(worker: any) {
+    this.worker = worker;
+  }
+
+  addEventListener(event: string, listener: any) {
+    this.worker["on"](event, wrapNodeListener(listener));
+  }
+
+  postMessage(msg: any, transfers?: any[]) {
+    this.worker["postMessage"](msg, transfers);
+  }
+
+  terminate() {
+    this.worker["terminate"]();
+  }
+}
+
+function wrapNodeListener(listener: any): any {
+  return function (data: any) {
+    listener({ ["data"]: data });
+  };
+}
+
+class WorkerExt {
+  channel: ToWorkerChannel;
+  terminateTimeout?: number;
+
+  constructor(worker: Worker) {
+    this.channel = new ToWorkerChannel(worker);
+  }
+
+  terminate() {
+    clearTimeout(this.terminateTimeout);
+    this.terminateTimeout = setTimeout(() => {
+      this.terminateSync();
+    }) as unknown as number;
+  }
+
+  terminateSync() {
+    clearTimeout(this.terminateTimeout);
+    WORKER_POOL!.remove(this);
+    this.channel.worker.terminate();
+  }
+}
+
+export type Message =
+  | WorkerInit
+  | SubprocessRun
+  | SubprocessRunStdout
+  | SubprocessRunStderr
+  | SubprocessRunExitCode
+  | SubprocessRunError
+  | FSRequest
+  | FSResponse;
+
+export const enum MessageType {
+  WorkerInit,
+  SubprocessRun,
+  SubprocessRunStdout,
+  SubprocessRunStderr,
+  SubprocessRunExitCode,
+  SubprocessRunError,
+  FSRequest,
+  FSResponse,
+}
+
+export type WorkerInit = {
+  type: MessageType.WorkerInit;
+  fsModule: WebAssembly.Module;
+  fsMemory: WebAssembly.Memory;
+};
+
+export type SubprocessRun = {
+  type: MessageType.SubprocessRun;
+  topic: number;
+  program: string;
+  args: string[];
+  env: { [k: string]: string };
+  wasmPath: string[];
+};
+
+export type SubprocessRunStdout = {
+  type: MessageType.SubprocessRunStdout;
+  buf: Uint8Array;
+};
+
+export type SubprocessRunStderr = {
+  type: MessageType.SubprocessRunStderr;
+  buf: Uint8Array;
+};
+
+export type SubprocessRunExitCode = {
+  type: MessageType.SubprocessRunExitCode;
+  exitCode: number;
+};
+
+export type SubprocessRunError = {
+  type: MessageType.SubprocessRunError;
+  message: string;
+};
+
+export const enum FSRequestType {
+  WriteFile,
+  ReadFileToBlob,
+  Mkdir,
+  Readdir,
+  Rmdir,
+  Mount,
+  Chdir,
+}
+
+export type FSRequest = {
+  type: MessageType.FSRequest;
+  fsType: FSRequestType;
+  args: any[];
+};
+
+export type FSResponse = {
+  type: MessageType.FSResponse;
+  ok?: any;
+  err?: any;
+};
+
+export type ToWorkerMessage = {
+  msg: Message;
+  req?: number;
+};
+
+export type FromWorkerMessage = {
+  msg: Message;
+  topic?: number;
+  topicEnd?: boolean;
+  req?: number;
+};
+
+type Subscription = {
+  deferred: Deferred<void>;
+  callback: (msg: Message) => void;
+};
+
+export type SerializedURL = {
+  url: string;
+};
+
+class ToWorkerChannel {
+  worker: Worker;
+  nextId: number;
+  subs: { [k: number]: Subscription };
+  reqs: { [k: number]: Deferred<Message> };
+
+  constructor(worker: Worker) {
+    this.worker = worker;
+    this.nextId = 1;
+    this.subs = {};
+    this.reqs = {};
+
+    worker.addEventListener("message", this.onMessage.bind(this));
+  }
+
+  onMessage(e: MessageEvent) {
+    const msg = e.data as FromWorkerMessage;
+    if (msg.topic) {
+      const sub = this.subs[msg.topic]!;
+      sub.callback(msg.msg);
+      if (msg.topicEnd) {
+        delete this.subs[msg.topic];
+        sub.deferred.resolve();
+      }
+    } else {
+      const req = this.reqs[msg.req!];
+      delete this.reqs[msg.req!];
+      req.resolve(msg.msg);
+    }
+  }
+
+  createTopic(): number {
+    return this.nextId++;
+  }
+
+  send(msg: Message, transfers?: any[]) {
+    const toWorkerMsg: ToWorkerMessage = { msg };
+    // @ts-ignore
+    this.worker.postMessage(toWorkerMsg, transfers);
+  }
+
+  req<T>(msg: Message, transfers?: any[]): Promise<T> {
+    const id = this.nextId++;
+    const deferred: Deferred<Message> = new Deferred();
+    this.reqs[id] = deferred;
+    const toWorkerMsg: ToWorkerMessage = { msg, req: id };
+    // @ts-ignore
+    this.worker.postMessage(toWorkerMsg, transfers);
+    return deferred.promise as unknown as Promise<T>;
+  }
+
+  sub(topic: number, callback: (msg: Message) => void): Promise<void> {
+    const deferred: Deferred<void> = new Deferred();
+    this.subs[topic] = {
+      deferred,
+      callback,
+    };
+    return deferred.promise;
+  }
+}
+
+export class FromWorkerChannel {
+  postMessage(msg: any) {
     if (isNode()) {
       // @ts-ignore
-      exitCode = nodeWasi.start(instance);
+      require("worker_threads")["parentPort"]["postMessage"](msg);
     } else {
-      exitCode = ctx.start(instance, args, msg.env);
+      // @ts-ignore
+      postMessage(msg);
     }
   }
 
-  channel().pub(
-    msg.topic,
-    {
-      type: MessageType.SubprocessRunExitCode,
-      exitCode,
-    },
-    true
-  );
-}
-
-type BinaryResolveCache = {
-  wasmPath?: string[];
-  resolutions: { [k: string]: string };
-};
-
-const BINARY_RESOLVE_CACHE: BinaryResolveCache = {
-  resolutions: {},
-};
-
-async function resolveBinaryPath(
-  program: string,
-  wasmPath: string[]
-): Promise<string | undefined> {
-  let sep = "/";
-  if (isNode()) {
-    // @ts-ignore
-    sep = require("path")["sep"];
-  }
-  const wasmExt = ".wasm";
-
-  if (program.includes(sep) || program.endsWith(wasmExt)) {
-    return program;
+  res(req: number, msg: Message) {
+    const fromWorkerMsg: FromWorkerMessage = {
+      msg,
+      req,
+    };
+    this.postMessage(fromWorkerMsg);
   }
 
-  program += wasmExt;
-
-  const cached = BINARY_RESOLVE_CACHE.resolutions[program];
-  if (cached) {
-    return cached;
-  }
-
-  if (isNode()) {
-    // @ts-ignore
-    const fs = require("fs/promises");
-    // @ts-ignore
-    const path = require("path");
-
-    if (!BINARY_RESOLVE_CACHE.wasmPath) {
-      BINARY_RESOLVE_CACHE.wasmPath = [];
-
-      const jspawnPath = path["join"]("node_modules", "@jspawn");
-      let folders: string[] | undefined;
-      try {
-        folders = await fs["readdir"](jspawnPath);
-      } catch (_) {}
-      if (folders) {
-        for (const folder of folders.filter((name) => name !== "jspawn")) {
-          const folderPath = path["join"](jspawnPath, folder);
-          for (const ent of await fs["readdir"](folderPath)) {
-            if (ent === program) {
-              BINARY_RESOLVE_CACHE.wasmPath!.push(
-                path["join"](folderPath, ent)
-              );
-            }
-          }
-        }
-      }
-    }
-
-    const programWithoutExt = program.replace(wasmExt, "");
-    for (const testPath of wasmPath.concat(BINARY_RESOLVE_CACHE.wasmPath)) {
-      if (testPath.endsWith(sep + program)) {
-        return (BINARY_RESOLVE_CACHE.resolutions[program] = testPath);
-      }
-    }
-  } else {
-    return wasmPath.find((path: string) => path.endsWith(sep + program));
-  }
-
-  return undefined;
-}
-
-async function fsReqeust(req: number, msg: FSRequest, ctx: Context) {
-  let ok;
-  try {
-    switch (msg.fsType) {
-      case FSRequestType.WriteFile: {
-        let data = msg.args[1] as
-          | Uint8Array
-          | string
-          | Blob
-          | SerializedURL
-          | URL;
-        const url = (data as SerializedURL).url;
-        if (url) {
-          data = new URL(url);
-        }
-        wasiFS.writeFileSync(
-          ctx,
-          msg.args[0] as string,
-          data as Uint8Array | string | Blob | URL
-        );
-        break;
-      }
-      case FSRequestType.ReadFileToBlob:
-        ok = wasiFS.readFileToBlobSync(
-          ctx,
-          msg.args[0] as string,
-          msg.args[1] as string | undefined
-        );
-        break;
-      case FSRequestType.Mkdir:
-        ok = wasiFS.mkdirSync(ctx, msg.args[0] as string);
-        break;
-      case FSRequestType.Readdir:
-        ok = wasiFS.readdirSync(ctx, msg.args[0] as string);
-        break;
-      case FSRequestType.Rmdir:
-        ok = wasiFS.rmdirSync(
-          ctx,
-          msg.args[0] as string,
-          msg.args[1] as boolean
-        );
-        break;
-    }
-  } catch (err) {
-    if (typeof err === "number") {
-      err = { ["code"]: "E" + wasi.errnoName(err) };
-    }
-    channel().res(req, {
-      type: MessageType.FSResponse,
-      err,
-    });
-    return;
-  }
-  channel().res(req, {
-    type: MessageType.FSResponse,
-    ok,
-  });
-}
-
-class Stdout {
-  callback: (buf: Uint8Array) => void;
-  len: number;
-  buf: Uint8Array;
-
-  constructor(callback: (buf: Uint8Array) => void) {
-    this.callback = callback;
-    this.len = 0;
-    this.buf = new Uint8Array(256);
-  }
-
-  push(charCode: number) {
-    if (this.buf.length === this.len) {
-      this.buf = resizeBuffer(this.buf, this.len * 2);
-    }
-    this.buf[this.len] = charCode;
-
-    if (charCode === 10) {
-      this.callback(this.buf.subarray(0, this.len));
-      this.len = 0;
-    } else {
-      this.len += 1;
-    }
+  pub(topic: number, msg: Message, end: boolean = false) {
+    const fromWorkerMsg: FromWorkerMessage = {
+      msg,
+      topic,
+      topicEnd: end,
+    };
+    this.postMessage(fromWorkerMsg);
   }
 }
