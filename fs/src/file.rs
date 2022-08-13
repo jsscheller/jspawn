@@ -235,11 +235,18 @@ impl Dir {
         }
     }
 
-    pub fn mount<'a>(&self, src: &str, path: &str, ents: &mut DirEntries) -> Result<()> {
+    pub fn mount<'a>(
+        &self,
+        is_node: bool,
+        src: &str,
+        path: &str,
+        ents: &mut DirEntries,
+    ) -> Result<()> {
         if src.starts_with("http:")
             || src.starts_with("https:")
             || src.starts_with("file:")
             || src.starts_with("blob:")
+            || (!src.is_empty() && !is_node)
         {
             self.write_file(path, 0, Some(src), ents)?;
         } else {
@@ -269,7 +276,7 @@ impl Dir {
                     let src = src.unwrap();
                     let name = iter.next().unwrap();
 
-                    self.mount(src, &format!("{path}/{name}"), ents)?;
+                    self.mount(is_node, src, &format!("{path}/{name}"), ents)?;
                 }
             }
         }

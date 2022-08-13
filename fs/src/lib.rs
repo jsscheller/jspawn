@@ -442,7 +442,8 @@ extern "C" fn request(req: Request, args_ptr: *mut u8, args_len: usize) -> Errno
                 out(ser_dirents(dirents, true, Some(cookie)));
             }
             Request::Mount => {
-                let s = args[0].as_str();
+                let is_node = args[0].as_bool();
+                let s = args[1].as_str();
 
                 let mut ents = DIR_ENTRIES.write();
                 let root_dir = ROOT_DIR.read();
@@ -456,7 +457,10 @@ extern "C" fn request(req: Request, args_ptr: *mut u8, args_len: usize) -> Errno
                     let src = src.unwrap();
                     let path = iter.next().unwrap();
 
-                    root_dir.as_dir().unwrap().mount(src, path, &mut ents)?;
+                    root_dir
+                        .as_dir()
+                        .unwrap()
+                        .mount(is_node, src, path, &mut ents)?;
                 }
             }
             Request::Chdir => {

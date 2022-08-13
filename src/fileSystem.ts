@@ -320,6 +320,7 @@ export class FileSystem {
     virtualPath: string
   ) {
     this.requestSync(FSRequest.Mount, [
+      isNode(),
       serMountArgs(source, virtualPath).join("\n"),
     ]);
   }
