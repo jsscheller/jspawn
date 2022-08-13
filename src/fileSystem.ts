@@ -505,7 +505,13 @@ export class Bindings {
             // `getResponseHeader` will log an error in Chromium if the header is not present.
             // The log looks something like: `Refused to get unsafe header`.
             if (xhr.getResponseHeader("content-encoding")) {
-              len = xhr.getResponseHeader("x-uncompressed-content-length");
+              for (const serverPrefix of ["x-amz-meta", "x"]) {
+                for (const prefix of ["de", "un"]) {
+                  const header = `${serverPrefix}-${prefix}compressed-content-length`;
+                  len = xhr.getResponseHeader(header);
+                  if (len) break;
+                }
+              }
             } else {
               len = xhr.getResponseHeader("content-length");
             }
