@@ -47,10 +47,15 @@ class WorkerThread {
   ctx: wasi.Context;
   nodeShim!: NodeShim;
   fs!: FileSystem;
+  binaryCache: {
+    wasmPath?: string[];
+    resolutions: { [k: string]: string };
+  };
 
   constructor() {
     this.channel = new FromWorkerChannel();
     this.ctx = new wasi.Context();
+    this.binaryCache = { resolutions: {} };
   }
 
   async onMessage(e: MessageEvent) {
@@ -77,7 +82,7 @@ class WorkerThread {
 
   async subprocessRun(msg: SubprocessRun) {
     let mod: WebAssembly.Module;
-    const binaryPath = await resolveBinaryPath(msg.program, msg.wasmPath);
+    const binaryPath = await this.resolveBinaryPath(msg.program, msg.wasmPath);
     if (!binaryPath) {
       return this.channel.pub(
         msg.topic,
@@ -195,6 +200,82 @@ class WorkerThread {
     );
   }
 
+  // In the browser, this assumes the mounted file system can be accessed via network.
+  // TODO: it should be possible to do without that assumption.
+  async resolveBinaryPath(
+    program: string,
+    wasmPath: string[]
+  ): Promise<string | undefined> {
+    let sep = "/";
+    if (isNode()) {
+      // @ts-ignore
+      sep = require("path")["sep"];
+    }
+    const wasmExt = ".wasm";
+
+    if (program.includes(sep) || program.endsWith(wasmExt)) {
+      return program;
+    }
+
+    program += wasmExt;
+
+    const cached = this.binaryCache.resolutions[program];
+    if (cached) return cached;
+
+    const resolvedPath = wasmPath.find((path: string) =>
+      path.endsWith(sep + program)
+    );
+    if (resolvedPath) return resolvedPath;
+
+    if (!this.binaryCache.wasmPath) {
+      const accPath = (readdir: any) => {
+        const join = (a: string, b: string) => {
+          return a + sep + b;
+        };
+        const acc = [];
+        const jspawnPath = join("node_modules", "@jspawn");
+        let folders: string[] | undefined;
+        try {
+          folders = readdir(jspawnPath);
+        } catch (_) {}
+        if (folders) {
+          for (const folder of folders.filter(
+            (name: string) => name !== "jspawn"
+          )) {
+            const folderPath = join(jspawnPath, folder);
+            for (const ent of readdir(folderPath).filter((name: string) =>
+              name.endsWith(wasmExt)
+            )) {
+              let resolvedPath = join(folderPath, ent);
+              if (!isNode()) resolvedPath = "/" + resolvedPath;
+              acc.push(resolvedPath);
+            }
+          }
+        }
+        return acc;
+      };
+
+      let readdir;
+      if (isNode()) {
+        // @ts-ignore
+        const fs = require("fs");
+        readdir = fs["readdirSync"];
+      } else {
+        readdir = this.fs.readdirSync.bind(this.fs);
+      }
+
+      this.binaryCache.wasmPath = accPath(readdir);
+    }
+
+    for (const testPath of this.binaryCache.wasmPath) {
+      if (testPath.endsWith(sep + program)) {
+        return (this.binaryCache.resolutions[program] = testPath);
+      }
+    }
+
+    return undefined;
+  }
+
   async fsReqeust(req: number, msg: FSRequest) {
     let ok;
     try {
@@ -257,73 +338,6 @@ class WorkerThread {
       ok,
     });
   }
-}
-
-type BinaryResolveCache = {
-  wasmPath?: string[];
-  resolutions: { [k: string]: string };
-};
-
-const BINARY_RESOLVE_CACHE: BinaryResolveCache = {
-  resolutions: {},
-};
-
-async function resolveBinaryPath(
-  program: string,
-  wasmPath: string[]
-): Promise<string | undefined> {
-  let sep = "/";
-  if (isNode()) {
-    // @ts-ignore
-    sep = require("path")["sep"];
-  }
-  const wasmExt = ".wasm";
-
-  if (program.includes(sep) || program.endsWith(wasmExt)) {
-    return program;
-  }
-
-  program += wasmExt;
-
-  const cached = BINARY_RESOLVE_CACHE.resolutions[program];
-  if (cached) {
-    return cached;
-  }
-
-  if (isNode()) {
-    // @ts-ignore
-    const fs = require("fs/promises");
-    // @ts-ignore
-    const path = require("path");
-
-    if (!BINARY_RESOLVE_CACHE.wasmPath) {
-      const acc = [];
-      const jspawnPath = path["join"]("node_modules", "@jspawn");
-      let folders: string[] | undefined;
-      try {
-        folders = await fs["readdir"](jspawnPath);
-      } catch (_) {}
-      if (folders) {
-        for (const folder of folders.filter((name) => name !== "jspawn")) {
-          const folderPath = path["join"](jspawnPath, folder);
-          for (const ent of await fs["readdir"](folderPath)) {
-            acc.push(path["join"](folderPath, ent));
-          }
-        }
-      }
-      BINARY_RESOLVE_CACHE.wasmPath = acc;
-    }
-
-    for (const testPath of wasmPath.concat(BINARY_RESOLVE_CACHE.wasmPath)) {
-      if (testPath.endsWith(sep + program)) {
-        return (BINARY_RESOLVE_CACHE.resolutions[program] = testPath);
-      }
-    }
-  } else {
-    return wasmPath.find((path: string) => path.endsWith(sep + program));
-  }
-
-  return undefined;
 }
 
 class LineOut {
