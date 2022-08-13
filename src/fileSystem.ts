@@ -501,6 +501,8 @@ export class Bindings {
             const xhr = new XMLHttpRequest();
             xhr.open("HEAD", url, false);
             xhr.send();
+            // `getResponseHeader` will log an error in Chromium if the header is not present.
+            // The log looks something like: `Refused to get unsafe header`.
             if (xhr.getResponseHeader("content-encoding")) {
               len = xhr.getResponseHeader("x-uncompressed-content-length");
             } else {
