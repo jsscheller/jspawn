@@ -51,31 +51,44 @@ class WorkerThread {
     wasmPath?: string[];
     resolutions: { [k: string]: string };
   };
+  queue: ToWorkerMessage[];
 
   constructor() {
     this.channel = new FromWorkerChannel();
     this.ctx = new wasi.Context();
     this.binaryCache = { resolutions: {} };
+    this.queue = [];
   }
 
   async onMessage(e: MessageEvent) {
     const msg = (isNode() ? e : e.data) as ToWorkerMessage;
     const data = msg.msg;
 
-    switch (data.type) {
-      case MessageType.WorkerInit: {
-        const fs = await FileSystem.instantiate(data.fsModule, data.fsMemory);
-        this.ctx.fs = this.fs = fs;
-        // @ts-ignore
-        const nodePath = isNode() ? require("path") : undefined;
-        this.nodeShim = new NodeShim(fs.nodeFS(), nodePath);
-        break;
+    if (data.type === MessageType.WorkerInit) {
+      const fs = await FileSystem.instantiate(data.fsModule, data.fsMemory);
+      this.ctx.fs = this.fs = fs;
+      // @ts-ignore
+      const nodePath = isNode() ? require("path") : undefined;
+      this.nodeShim = new NodeShim(fs.nodeFS(), nodePath);
+
+      while (this.queue.length) {
+        const msg = this.queue.shift()!;
+        await this.handleMessage(msg);
       }
+    } else if (!this.fs) {
+      this.queue.push(msg);
+    } else {
+      this.handleMessage(msg);
+    }
+  }
+
+  async handleMessage(msg: ToWorkerMessage) {
+    switch (msg.msg.type) {
       case MessageType.SubprocessRun:
-        await this.subprocessRun(data);
+        await this.subprocessRun(msg.msg);
         break;
       case MessageType.FSRequest:
-        await this.fsReqeust(msg.req!, data);
+        await this.fsReqeust(msg.req!, msg.msg);
         break;
     }
   }
