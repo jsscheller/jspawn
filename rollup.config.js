@@ -11,6 +11,7 @@ function config({ format, minify, input, ext = "js" }) {
       file: `${dir}/${input}${minifierSuffix}.${ext}`,
       format,
       sourcemap: true,
+      intro: `const IS_MOD = ${format === "esm"};`,
     },
     plugins: [
       typescript({

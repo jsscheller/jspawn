@@ -66,8 +66,8 @@ type WorkerState = {
 let WORKER_PATH!: string;
 // UMD/nodejs note:
 // Normally accessing `import.meta` doesn't work in non-modules.
-// However, it gets replaced with an equivalent value in the build step when targeting UMD.
-// @ts-ignore
+// However, it gets replaced with an equivalent value in the build step when targeting non-ESM.
+// We need the try-catch for IIFE.
 try {
   // @ts-ignore
   WORKER_PATH = import.meta.url;
@@ -162,6 +162,9 @@ class WorkerPool {
   }
 }
 
+// Defined in `rollup.config.js`
+declare const IS_MOD: boolean;
+
 async function createWorker(id: string, sep: string): Promise<Worker> {
   let worker;
   let path = WORKER_PATH;
@@ -186,15 +189,9 @@ async function createWorker(id: string, sep: string): Promise<Worker> {
       })
     ) as unknown as Worker;
   } else {
-    let isModule = true;
-    try {
-      import.meta;
-    } catch (_) {
-      isModule = false;
-    }
     worker = new Worker(
       `${path}${path.includes("?") ? "&" : "?"}${id}`,
-      isModule ? { type: "module" } : undefined
+      IS_MOD ? { type: "module" } : {}
     );
     if (path !== WORKER_PATH) {
       URL.revokeObjectURL(path);
