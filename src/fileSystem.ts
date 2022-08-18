@@ -359,7 +359,7 @@ function isBuffer(x: any): boolean {
 function toUint8(buf: Buffer): Uint8Array {
   if (buf instanceof Uint8Array) {
     return buf;
-  } else if (buf instanceof ArrayBuffer) {
+  } else if (buf instanceof ArrayBuffer || buf instanceof SharedArrayBuffer) {
     return new Uint8Array(buf);
   } else {
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);

@@ -157,15 +157,16 @@ class WorkerThread {
         js = await (await fetch(jsPath)).text();
       }
       const func = new Function(
-        `"use strict"; return function(process, require, __dirname, Buffer, crypto) { var importScripts; var exports = {}; ${js} return exports.Module; }`
+        `"use strict"; return function(process, require, __dirname, Buffer, crypto) { var importScripts; var exports = {}; ${js} return exports; }`
       )();
-      const Module = func(
+      const exports = func(
         this.nodeShim.process,
         this.nodeShim.require,
         this.nodeShim.__dirname,
         this.nodeShim.Buffer,
         this.nodeShim.crypto
       );
+      const Module = Object.values(exports)[0]!;
 
       const stdinCallback = () => null;
       const stdoutCallback = stdout.push.bind(stdout);

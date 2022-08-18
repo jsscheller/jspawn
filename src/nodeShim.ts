@@ -85,6 +85,24 @@ export class NodeShim {
       },
     };
 
+    const worker_threads = {
+      ["Worker"]: isNode()
+        ? // @ts-ignore
+          require("worker_threads")["Worker"]
+        : Worker,
+    };
+
+    const os = {
+      ["cpus"]: function (): number {
+        if (isNode()) {
+          // @ts-ignore
+          return require("os").cpus().length;
+        } else {
+          return navigator.hardwareConcurrency;
+        }
+      },
+    };
+
     this.require = function (mod: string): any {
       switch (mod) {
         case "fs":
@@ -93,6 +111,10 @@ export class NodeShim {
           return nodePath || path;
         case "child_process":
           return child_process;
+        case "worker_threads":
+          return worker_threads;
+        case "os":
+          return os;
         default:
           throw `unexpected module: ${mod}`;
       }
