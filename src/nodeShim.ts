@@ -1,5 +1,5 @@
 import { FileSystem, constants } from "./fileSystem";
-import { unreachable } from "./utils";
+import { unreachable, isNode } from "./utils";
 
 export class NodeShim {
   process: any;
@@ -7,6 +7,7 @@ export class NodeShim {
   __dirname: any;
   Buffer: any;
   wasmBuf?: any;
+  crypto: any;
 
   constructor(fs: FileSystem, nodePath?: any) {
     this.process = {
@@ -109,6 +110,18 @@ export class NodeShim {
         return buf;
       },
     };
+
+    if (isNode()) {
+      const nodeCrypto = require("crypto");
+      this.crypto = {
+        ["getRandomValues"](buf: Uint8Array) {
+          buf.set(nodeCrypto["randomBytes"](buf.length));
+          return buf;
+        },
+      };
+    } else {
+      this.crypto = crypto;
+    }
 
     // `instantiateStreaming` is required or else emscripten tries reading from the filesystem.
     if (!WebAssembly.instantiateStreaming) {
