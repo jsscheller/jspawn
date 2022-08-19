@@ -18,9 +18,20 @@ declare type Output = {
 
 export async function run(
   program: string,
-  args: string[],
+  args: any[],
   opts: Options = {}
 ): Promise<Output> {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (typeof arg !== "string") {
+      if (arg != null && typeof arg.toString === "function") {
+        args[i] = arg.toString();
+      } else {
+        throw new TypeError(`invalid subprocess argument at index ${i}`);
+      }
+    }
+  }
+
   let output = {
     stdout: "",
     stderr: "",
