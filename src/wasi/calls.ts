@@ -2,8 +2,10 @@ import { Context } from "./context";
 import * as t from "./types";
 import * as e from "./errno";
 import * as c from "./constants";
-import { ExitStatus } from "../utils";
+import { ExitStatus, isNode } from "../utils";
 import { Memory } from "../memory";
+
+let NODE_CRYPTO: any;
 
 export const snapshotPreview1 = {
   ["args_get"]: function (ctx: Context, argvPtr: number, argvBufPtr: number) {
@@ -380,13 +382,13 @@ export const snapshotPreview1 = {
     throw e.ERRNO_NOSYS;
   },
   ["random_get"]: function (ctx: Context, bufPtr: number, bufLen: number) {
-    if (globalThis.crypto) {
-      crypto.getRandomValues(ctx.mem.u8.subarray(bufPtr, bufPtr + bufLen));
+    const buf = ctx.mem.u8.subarray(bufPtr, bufPtr + bufLen);
+    if (isNode()) {
+      // @ts-ignore
+      NODE_CRYPTO = NODE_CRYPTO || require("crypto");
+      buf.set(NODE_CRYPTO["randomBytes"](buf.length));
     } else {
-      let len = bufLen;
-      while (len--) {
-        ctx.mem.u8[bufPtr + len] = Math.floor(Math.random() * 256);
-      }
+      crypto.getRandomValues(buf);
     }
   },
   ["sched_yield"]: function (_ctx: Context) {},
