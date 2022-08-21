@@ -151,6 +151,12 @@ class WorkerThread {
         ["preRun"]: (mod: any) => {
           Object.assign(mod["ENV"], msg.env);
         },
+        ["instantiateWasm"]: async (imports: any, cb: any) => {
+          delete nodeShim.wasmBuf;
+          const instance = await WebAssembly.instantiate(mod, imports);
+          cb(instance, mod);
+          return {};
+        },
       });
 
       emMod["FS"]["setIgnorePermissions"](true);

@@ -7,7 +7,7 @@
   "types": "umd/jspawn.d.ts",
   "scripts": {
     "test:browser": "./node_modules/karma/bin/karma start",
-    "test:node": "./node_modules/mocha/bin/mocha.js tests/node",
+    "test:node": "./node_modules/mocha/bin/mocha.js tests/node --node-option no-wasm-tier-up",
     "test": "npm run test:node && npm run test:browser",
     "build": "node build.js"
   },
