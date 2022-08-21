@@ -164,7 +164,8 @@ class WorkerThread {
       const working = "/working";
       emMod["FS"]["mkdir"](working);
       emMod["FS"]["mount"](emMod["NODEFS"], { root: "." }, working);
-      emMod["FS"]["chdir"](working);
+      const currentDir = this.fs.cwd();
+      emMod["FS"]["chdir"](working + (currentDir ? `/~/${currentDir}` : ""));
 
       exitCode = emMod["callMain"](msg.args);
       if (nodeShim.createdWorker) {

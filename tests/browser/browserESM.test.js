@@ -60,7 +60,6 @@ describe("browser ESM tests", function () {
   });
 
   it("works with Emscripten pthreads", async function () {
-    this.timeout(10000);
     await fs.mount("/base/tests/assets/sample.mp4", "sample.mp4");
     const output = await subprocess.run("/base/node_modules/@jspawn/ffmpeg-wasm/ffmpeg.wasm", [
       "-i",

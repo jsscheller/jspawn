@@ -25,6 +25,7 @@ const enum FSRequest {
   LstatSync,
   Mount,
   Chdir,
+  CWD,
 }
 
 declare type Dirent = {
@@ -327,6 +328,10 @@ export class FileSystem {
 
   chdir(dir: string) {
     this.requestSync(FSRequest.Chdir, [dir]);
+  }
+
+  cwd(): string {
+    return this.requestSync(FSRequest.CWD, []);
   }
 }
 
@@ -660,7 +665,7 @@ export class Bindings {
   ): string | Uint8Array | undefined {
     this.buf = bufs[0];
     delete this.out;
-    const ptr = this.writeArgs(args);
+    const ptr = args.length ? this.writeArgs(args) : 0;
     const errno = this.exports["request"](req, ptr, args.length);
     if (errno) throw errno;
     return this.out ? this.out : this.buf;

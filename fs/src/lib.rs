@@ -196,11 +196,16 @@ enum Request {
     LstatSync,
     Mount,
     Chdir,
+    CWD,
 }
 
 #[no_mangle]
 extern "C" fn request(req: Request, args_ptr: *mut u8, args_len: usize) -> Errno {
-    let args = read_args(args_ptr, args_len);
+    let args = if args_ptr.is_null() {
+        Vec::new()
+    } else {
+        read_args(args_ptr, args_len)
+    };
     return match request_impl(req, args) {
         Err(errno) => errno,
         Ok(_) => ERRNO_SUCCESS,
@@ -467,6 +472,9 @@ extern "C" fn request(req: Request, args_ptr: *mut u8, args_len: usize) -> Errno
                 let dir = args[0].as_str();
 
                 *CURRENT_DIR.write() = dir.into();
+            }
+            Request::CWD => {
+                out(format!("{:?}", CURRENT_DIR.read()));
             }
         }
         Ok(())

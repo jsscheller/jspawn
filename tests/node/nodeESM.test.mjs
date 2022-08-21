@@ -5,7 +5,7 @@ import { expect } from "chai";
 describe("node ESM tests", function () {
   for (const jspawn_ of [jspawn, jspawnMin]) {
     const suffix = jspawn_ === jspawnMin ? " (min)" : "";
-    const { fs, subprocess } = jspawn_;
+    const { chdir, fs, subprocess } = jspawn_;
     it(`works with Emscripten program${suffix}`, async function () {
       const output = await subprocess.run(
         "node_modules/@jspawn/imagemagick-wasm/magick.wasm",
@@ -63,7 +63,6 @@ describe("node ESM tests", function () {
     });
 
     it(`works with Emscripten pthreads${suffix}`, async function () {
-      this.timeout(10000);
       await fs.mount("./tests/assets/sample.mp4", "sample.mp4");
       const output = await subprocess.run("ffmpeg", [
         "-i",
@@ -75,6 +74,27 @@ describe("node ESM tests", function () {
       expect(output.exitCode).to.equal(0);
 
       const outMP3 = await fs.readFile("out.mp3");
+      expect(outMP3.length).to.not.equal(0);
+    });
+
+    it(`chdir works with Emscripten${suffix}`, async function () {
+      await fs.mount(
+        {
+          "sample.mp4": "./tests/assets/sample.mp4",
+        },
+        "foo"
+      );
+      await chdir("foo");
+      const output = await subprocess.run("ffmpeg", [
+        "-i",
+        "sample.mp4",
+        "-threads",
+        "1",
+        "out.mp3",
+      ]);
+      expect(output.exitCode).to.equal(0);
+
+      const outMP3 = await fs.readFile("~/foo/out.mp3");
       expect(outMP3.length).to.not.equal(0);
     });
   }
