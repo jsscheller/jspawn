@@ -1,15 +1,31 @@
 import { FileSystem, constants } from "./fileSystem";
 import { unreachable, isNode } from "./utils";
+import { createWorkerSync, JSPAWN_PTHREAD } from "./worker";
 
 export class NodeShim {
   process: any;
   require: any;
-  __dirname: any;
   Buffer: any;
-  wasmBuf?: any;
   crypto: any;
+  postMessage: any;
+  importScripts: any;
+  performance: any;
+  self: any;
+  Worker: any;
+  wasmBuf?: any;
+  jsPath?: string;
+  isPthread?: boolean;
+  createdWorker?: boolean;
+  onExit?: (exitCode: number) => void;
+  exitCode?: number;
 
-  constructor(fs: FileSystem, nodePath?: any) {
+  constructor(
+    fs: FileSystem,
+    fsModule: WebAssembly.Module,
+    fsMemory: WebAssembly.Memory,
+    isPthread?: boolean
+  ) {
+    this.isPthread = isPthread;
     this.process = {
       // @ts-ignore
       ["versions"]: {
@@ -32,6 +48,14 @@ export class NodeShim {
       // @ts-ignore
       ["hrtime"]() {
         return [0, 0];
+      },
+      // @ts-ignore
+      ["exit"]: (exitCode: number) => {
+        if (this.onExit) {
+          this.onExit(exitCode);
+        } else {
+          this.exitCode = exitCode;
+        }
       },
     };
 
@@ -70,14 +94,20 @@ export class NodeShim {
 
     // This is used in the `readlink` function.
     // TODO: test to determine if this is sufficient.
-    const path = {
-      ["resolve"]: function (path: string): string {
-        return path;
-      },
-      ["relative"]: function (a: string, b: string): string {
-        return a + "/" + b;
-      },
-    };
+    const path = isNode()
+      ? // @ts-ignore
+        require("path")
+      : {
+          ["resolve"]: function (path: string): string {
+            return path;
+          },
+          ["relative"]: function (a: string, b: string): string {
+            return a + "/" + b;
+          },
+          ["dirname"]: function () {
+            return "";
+          },
+        };
 
     const child_process = {
       ["spawnSync"]: function () {
@@ -85,20 +115,30 @@ export class NodeShim {
       },
     };
 
+    const that = this;
+    this.Worker = function () {
+      that.createdWorker = true;
+      return new NodeWorker(that.jsPath!, fsModule, fsMemory);
+    };
     const worker_threads = {
-      ["Worker"]: isNode()
-        ? // @ts-ignore
-          require("worker_threads")["Worker"]
-        : Worker,
+      ["Worker"]: this.Worker,
+      ["parentPort"]: {
+        ["on"]: function () {},
+      },
     };
 
     const os = {
-      ["cpus"]: function (): number {
+      ["cpus"]: function (): any[] {
         if (isNode()) {
           // @ts-ignore
-          return require("os").cpus().length;
+          return require("os").cpus();
         } else {
-          return navigator.hardwareConcurrency;
+          const cpus = [];
+          const cpuCount = navigator.hardwareConcurrency || 1;
+          for (let i = 0; i < cpuCount; i++) {
+            cpus.push({});
+          }
+          return cpus;
         }
       },
     };
@@ -108,7 +148,7 @@ export class NodeShim {
         case "fs":
           return boundFs;
         case "path":
-          return nodePath || path;
+          return path;
         case "child_process":
           return child_process;
         case "worker_threads":
@@ -119,8 +159,6 @@ export class NodeShim {
           throw `unexpected module: ${mod}`;
       }
     };
-
-    this.__dirname = "";
 
     this.Buffer = {
       // We need alloc so `Buffer.from` is called:
@@ -141,9 +179,28 @@ export class NodeShim {
           return buf;
         },
       };
+      const parentPort = require("worker_threads")["parentPort"];
+      this.postMessage = parentPort["postMessage"].bind(parentPort);
     } else {
       this.crypto = crypto;
+      this.postMessage = globalThis.postMessage;
     }
+
+    // Assuming this only gets called once during pthread init.
+    this.importScripts = () => {
+      const path = this.jsPath!.replace(".worker.", ".");
+      const exports = this.evalSync(path);
+      for (const [key, val] of Object.entries(exports)) {
+        // @ts-ignore
+        globalThis[key] = val;
+      }
+    };
+
+    this.performance = globalThis.performance || {
+      ["now"]: () => Date.now(),
+    };
+
+    this.self = {};
 
     // `instantiateStreaming` is required or else emscripten tries reading from the filesystem.
     if (!WebAssembly.instantiateStreaming) {
@@ -158,5 +215,95 @@ export class NodeShim {
         return WebAssembly.instantiate(abuf, imports);
       };
     }
+  }
+
+  async eval(path: string, wasmBuf?: any): Promise<any> {
+    let js;
+    if (isNode()) {
+      // @ts-ignore
+      const nodePath = require("path");
+      // @ts-ignore
+      js = await require("fs/promises")["readFile"](
+        nodePath["isAbsolute"](path)
+          ? path
+          : nodePath["join"](process["cwd"](), path)
+      );
+      this.wasmBuf = wasmBuf;
+    } else {
+      js = await (await fetch(path)).text();
+    }
+    this.jsPath = path;
+    return this.evalImpl(js);
+  }
+
+  evalSync(path: string): any {
+    let js;
+    if (isNode()) {
+      // @ts-ignore
+      js = require("fs")["readFileSync"](path);
+    } else {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", path, false);
+      xhr.responseType = "text";
+      xhr.send();
+      js = xhr.response;
+    }
+    return this.evalImpl(js);
+  }
+
+  evalImpl(js: string): any {
+    const shims = {
+      ["global"]: {},
+      ["process"]: this.process,
+      ["require"]: this.require,
+      ["__dirname"]: "",
+      ["__filename"]: "",
+      ["Buffer"]: this.Buffer,
+      ["crypto"]: this.crypto,
+      ["importScripts"]: this.isPthread ? this.importScripts : null,
+      ["performance"]: this.performance,
+      ["self"]: this.self,
+      ["postMessage"]: this.isPthread ? this.postMessage : null,
+      ["Worker"]: this.Worker,
+    };
+    const func = new Function(
+      `"use strict"; return function(${Object.keys(
+        shims
+      ).join()}) { var exports = {}; ${js} return exports; }`
+    )();
+    return func.apply(func, Object.values(shims));
+  }
+}
+
+class NodeWorker {
+  worker: Worker;
+
+  constructor(
+    jsPath: string,
+    fsModule: WebAssembly.Module,
+    fsMemory: WebAssembly.Memory
+  ) {
+    this.worker = createWorkerSync(
+      JSPAWN_PTHREAD,
+      jsPath.replace(/.js$/, ".worker.js")
+    );
+    this.worker.postMessage([fsModule, fsMemory]);
+  }
+
+  ["on"](name: string, listener: any) {
+    if (name === "message") {
+      this.worker.addEventListener(name, (e: MessageEvent) => listener(e.data));
+    } else {
+      // @ts-ignore
+      this.worker.addEventListener(name, (_: MessageEvent) => {});
+    }
+  }
+
+  ["postMessage"](msg: any) {
+    this.worker.postMessage(msg);
+  }
+
+  ["terminate"]() {
+    this.worker.terminate();
   }
 }

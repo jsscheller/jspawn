@@ -8,6 +8,10 @@ module.exports = function (config) {
         included: false,
       },
       {
+        pattern: "tests/assets/*",
+        included: false,
+      },
+      {
         pattern: "dist/iife/jspawn.js",
         watched: false,
       },

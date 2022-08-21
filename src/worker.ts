@@ -2,6 +2,7 @@ import { isNode, Deferred, loadNodeModule } from "./utils";
 import { FileSystem } from "./fileSystem";
 
 export const JSPAWN_WORKER_THREAD = "jspawnWorkerThread";
+export const JSPAWN_PTHREAD = "jspawnPthread";
 
 export async function subscribe(
   createMsg: (topic: number) => Message,
@@ -166,7 +167,6 @@ class WorkerPool {
 declare const IS_MOD: boolean;
 
 async function createWorker(id: string, sep: string): Promise<Worker> {
-  let worker;
   let path = WORKER_PATH;
   if (
     !isNode() &&
@@ -180,22 +180,62 @@ async function createWorker(id: string, sep: string): Promise<Worker> {
 
   if (isNode()) {
     const worker_threads = await loadNodeModule("worker_threads");
-    path =
-      path.replace(`file:${sep}${sep}`, "").split(sep).slice(0, -2).join(sep) +
-      `${sep}umd${sep}workerThread.cjs`;
-    worker = new NodeWorker(
-      new worker_threads["Worker"](path, {
-        ["workerData"]: { [id]: true },
-      })
-    ) as unknown as Worker;
+    return createNodeWorker(id, "1", path, sep, worker_threads);
   } else {
-    worker = new Worker(
-      `${path}${path.includes("?") ? "&" : "?"}${id}`,
-      IS_MOD ? { type: "module" } : {}
-    );
-    if (path !== WORKER_PATH) {
-      URL.revokeObjectURL(path);
-    }
+    return createWebWorker(id, "1", path);
+  }
+}
+
+export function createWorkerSync(id: string, data: string): Worker {
+  let path = WORKER_PATH;
+  if (
+    !isNode() &&
+    /^http:|https:/.test(WORKER_PATH) &&
+    !WORKER_PATH.startsWith(location.origin)
+  ) {
+    // Support cross-origin loading.
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", WORKER_PATH, false);
+    xhr.responseType = "blob";
+    xhr.send();
+    path = URL.createObjectURL(xhr.response);
+  }
+
+  if (isNode()) {
+    // @ts-ignore
+    const worker_threads = require("worker_threads");
+    // @ts-ignore
+    const sep = require("path")["sep"];
+    return createNodeWorker(id, data, path, sep, worker_threads);
+  } else {
+    return createWebWorker(id, data, path);
+  }
+}
+
+function createNodeWorker(
+  id: string,
+  data: string,
+  path: string,
+  sep: string,
+  worker_threads: any
+): Worker {
+  path =
+    path.replace(`file:${sep}${sep}`, "").split(sep).slice(0, -2).join(sep) +
+    `${sep}umd${sep}workerThread.cjs`;
+  return new NodeWorker(
+    new worker_threads["Worker"](path, {
+      ["workerData"]: { [id]: data },
+    })
+  ) as unknown as Worker;
+}
+
+function createWebWorker(id: string, data: any, path: string): Worker {
+  const worker = new Worker(
+    `${path}${path.includes("?") ? "&" : "?"}${id}=${data}`,
+    IS_MOD ? { type: "module" } : {}
+  );
+  if (path !== WORKER_PATH) {
+    URL.revokeObjectURL(path);
   }
   return worker;
 }
@@ -207,15 +247,15 @@ class NodeWorker {
     this.worker = worker;
   }
 
-  addEventListener(event: string, listener: any) {
+  ["addEventListener"](event: string, listener: any) {
     this.worker["on"](event, wrapNodeListener(listener));
   }
 
-  postMessage(msg: any, transfers?: any[]) {
+  ["postMessage"](msg: any, transfers?: any[]) {
     this.worker["postMessage"](msg, transfers);
   }
 
-  terminate() {
+  ["terminate"]() {
     this.worker["terminate"]();
   }
 }

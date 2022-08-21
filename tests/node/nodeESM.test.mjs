@@ -57,4 +57,20 @@ describe("node ESM tests", function () {
     const outPNG = await fs.readFile("blank_em_resolved.png");
     expect(outPNG.length).to.not.equal(0);
   });
+
+  it("works with Emscripten pthreads", async function () {
+    this.timeout(10000);
+    await fs.mount("./tests/assets/sample.mp4", "sample.mp4");
+    const output = await subprocess.run("ffmpeg", [
+      "-i",
+      "sample.mp4",
+      "-threads",
+      "1",
+      "out.mp3",
+    ]);
+    expect(output.exitCode).to.equal(0);
+
+    const outMP3 = await fs.readFile("out.mp3");
+    expect(outMP3.length).to.not.equal(0);
+  });
 });

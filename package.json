@@ -15,6 +15,7 @@
   "devDependencies": {
     "@jspawn/imagecli-wasm": "^0.1.0",
     "@jspawn/imagemagick-wasm": "^0.1.1",
+    "@jspawn/ffmpeg-wasm": "^0.0.1",
     "chai": "^4.3.6",
     "karma": "^6.3.20",
     "karma-chai": "^0.1.0",

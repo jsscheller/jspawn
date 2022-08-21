@@ -8,14 +8,17 @@ import {
   FromWorkerChannel,
   SerializedURL,
   JSPAWN_WORKER_THREAD,
+  JSPAWN_PTHREAD,
 } from "./worker";
-import { resizeBuffer, isNode } from "./utils";
+import { resizeBuffer, isNode, Deferred } from "./utils";
 import { FileSystem } from "./fileSystem";
 import * as wasi from "./wasi/index";
 
 function main() {
-  if (isWorkerThread()) {
-    const thread = new WorkerThread();
+  const isWorkerThread = !!getWorkerData(JSPAWN_WORKER_THREAD);
+  const isPthread = !!getWorkerData(JSPAWN_PTHREAD);
+  if (isWorkerThread || isPthread) {
+    const thread = isPthread ? new Pthread() : new WorkerThread();
     const onMessage = thread.onMessage.bind(thread);
     if (isNode()) {
       // @ts-ignore
@@ -28,25 +31,12 @@ function main() {
   }
 }
 
-function isWorkerThread(): boolean {
-  if (isNode()) {
-    try {
-      // @ts-ignore
-      const data = require("worker_threads")["workerData"];
-      return data && data[JSPAWN_WORKER_THREAD];
-    } catch (_) {
-      return false;
-    }
-  } else {
-    return location.search.includes(JSPAWN_WORKER_THREAD);
-  }
-}
-
 class WorkerThread {
   channel: FromWorkerChannel;
   ctx: wasi.Context;
-  nodeShim!: NodeShim;
   fs!: FileSystem;
+  fsModule!: WebAssembly.Module;
+  fsMemory!: WebAssembly.Memory;
   binaryCache: {
     wasmPath?: string[];
     resolutions: { [k: string]: string };
@@ -67,12 +57,10 @@ class WorkerThread {
     if (data.type === MessageType.WorkerInit) {
       const fs = await FileSystem.instantiate(data.fsModule, data.fsMemory);
       this.ctx.fs = this.fs = fs;
-      // @ts-ignore
-      const nodePath = isNode() ? require("path") : undefined;
-      this.nodeShim = new NodeShim(fs.nodeFS(), nodePath);
+      this.fsModule = data.fsModule;
+      this.fsMemory = data.fsMemory;
 
-      while (this.queue.length) {
-        const msg = this.queue.shift()!;
+      for (const msg of this.queue.splice(0, this.queue.length)) {
         await this.handleMessage(msg);
       }
     } else if (!this.fs) {
@@ -141,31 +129,13 @@ class WorkerThread {
       )
     ) {
       // Assuming this is Emscripten if no WASI exports are found.
-      const jsPath = binaryPath.replace(/wasm$/, "js");
-      let js;
-      if (isNode()) {
-        // @ts-ignore
-        const nodePath = require("path");
-        // @ts-ignore
-        js = await require("fs/promises")["readFile"](
-          nodePath["isAbsolute"](jsPath)
-            ? jsPath
-            : nodePath["join"](process["cwd"](), jsPath)
-        );
-        this.nodeShim.wasmBuf = wasmBuf;
-      } else {
-        js = await (await fetch(jsPath)).text();
-      }
-      const func = new Function(
-        `"use strict"; return function(process, require, __dirname, Buffer, crypto) { var importScripts; var exports = {}; ${js} return exports; }`
-      )();
-      const exports = func(
-        this.nodeShim.process,
-        this.nodeShim.require,
-        this.nodeShim.__dirname,
-        this.nodeShim.Buffer,
-        this.nodeShim.crypto
+      const nodeShim = new NodeShim(
+        this.fs.nodeFS(),
+        this.fsModule,
+        this.fsMemory
       );
+      const jsPath = binaryPath.replace(/wasm$/, "js");
+      const exports = await nodeShim.eval(jsPath, wasmBuf);
       const Module = Object.values(exports)[0]!;
 
       const stdinCallback = () => null;
@@ -175,6 +145,7 @@ class WorkerThread {
       // @ts-ignore
       const emMod = await Module({
         ["noInitialRun"]: true,
+        ["noExitRuntime"]: false,
         ["noFSInit"]: true,
         ["locateFile"]: () => binaryPath,
         ["preRun"]: (mod: any) => {
@@ -190,10 +161,22 @@ class WorkerThread {
       emMod["FS"]["chdir"](working);
 
       exitCode = emMod["callMain"](msg.args);
+      if (nodeShim.createdWorker) {
+        const deferred = new Deferred();
+        nodeShim.onExit = (exitCode_: number) => {
+          exitCode = exitCode_;
+          deferred.resolve(0);
+        };
+        await deferred.promise;
+      }
       if (exitCode == null) {
-        const getExitStatus = emMod["exitStatus"];
-        if (typeof getExitStatus === "function") {
-          exitCode = getExitStatus();
+        if (nodeShim.exitCode != null) {
+          exitCode = nodeShim.exitCode;
+        } else {
+          const getExitStatus = emMod["exitStatus"];
+          if (typeof getExitStatus === "function") {
+            exitCode = getExitStatus();
+          }
         }
       }
     } else {
@@ -221,11 +204,7 @@ class WorkerThread {
     program: string,
     wasmPath: string[]
   ): Promise<string | undefined> {
-    let sep = "/";
-    if (isNode()) {
-      // @ts-ignore
-      sep = require("path")["sep"];
-    }
+    const sep = pathSep();
     const wasmExt = ".wasm";
 
     if (program.includes(sep) || program.endsWith(wasmExt)) {
@@ -355,6 +334,15 @@ class WorkerThread {
   }
 }
 
+function pathSep(): string {
+  let sep = "/";
+  if (isNode()) {
+    // @ts-ignore
+    sep = require("path")["sep"];
+  }
+  return sep;
+}
+
 class LineOut {
   callback: (buf: Uint8Array) => void;
   len: number;
@@ -378,6 +366,59 @@ class LineOut {
     } else {
       this.len += 1;
     }
+  }
+}
+
+class Pthread {
+  nodeShim!: NodeShim;
+  queue: any[];
+  init?: boolean;
+
+  constructor() {
+    this.queue = [];
+  }
+
+  async onMessage(e: MessageEvent) {
+    const data = (isNode() ? e : e.data) as any;
+
+    if (Array.isArray(data)) {
+      const [fsModule, fsMemory] = data;
+      const fs = await FileSystem.instantiate(fsModule, fsMemory);
+      this.nodeShim = new NodeShim(fs.nodeFS(), fsModule, fsMemory, true);
+
+      const workerPath = getWorkerData(JSPAWN_PTHREAD) as string;
+      await this.nodeShim.eval(workerPath);
+
+      for (const data of this.queue.splice(0, this.queue.length)) {
+        this.handleMessage(data);
+      }
+
+      this.init = true;
+    } else {
+      if (this.init) {
+        this.handleMessage(data);
+      } else {
+        this.queue.push(data);
+      }
+    }
+  }
+
+  handleMessage(data: any) {
+    this.nodeShim.self["onmessage"]({ ["data"]: data });
+  }
+}
+
+function getWorkerData(key: string): any {
+  if (isNode()) {
+    try {
+      // @ts-ignore
+      const data = require("worker_threads")["workerData"];
+      return data && data[key];
+    } catch (_) {
+      return undefined;
+    }
+  } else {
+    return new URL(location.href).searchParams.get(key);
   }
 }
 

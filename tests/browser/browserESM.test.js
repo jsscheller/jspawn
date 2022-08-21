@@ -58,4 +58,20 @@ describe("browser ESM tests", function () {
     const outPNG = await fs.readFileToBlob("blank_em_resolved.png");
     expect(outPNG.size).to.not.equal(0);
   });
+
+  it("works with Emscripten pthreads", async function () {
+    this.timeout(10000);
+    await fs.mount("/base/tests/assets/sample.mp4", "sample.mp4");
+    const output = await subprocess.run("/base/node_modules/@jspawn/ffmpeg-wasm/ffmpeg.wasm", [
+      "-i",
+      "sample.mp4",
+      "-threads",
+      "1",
+      "out.mp3",
+    ]);
+    expect(output.exitCode).to.equal(0);
+
+    const outMP3 = await fs.readFileToBlob("out.mp3");
+    expect(outMP3.size).to.not.equal(0);
+  });
 });
