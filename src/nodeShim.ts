@@ -201,20 +201,6 @@ export class NodeShim {
     };
 
     this.self = {};
-
-    // `instantiateStreaming` is required or else emscripten tries reading from the filesystem.
-    if (!WebAssembly.instantiateStreaming) {
-      WebAssembly.instantiateStreaming = async function (
-        src: PromiseLike<Response> | Response,
-        imports: any
-      ): Promise<any> {
-        if ((src as PromiseLike<Response>).then) {
-          src = await src;
-        }
-        const abuf = await (src as Response).arrayBuffer();
-        return WebAssembly.instantiate(abuf, imports);
-      };
-    }
   }
 
   async eval(path: string, wasmBuf?: any): Promise<any> {
