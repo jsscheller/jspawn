@@ -161,11 +161,16 @@ class WorkerThread {
 
       emMod["FS"]["setIgnorePermissions"](true);
       emMod["FS"]["init"](stdinCallback, stdoutCallback, stderrCallback);
-      const working = "/working";
+      let working = "/working";
       emMod["FS"]["mkdir"](working);
       emMod["FS"]["mount"](emMod["NODEFS"], { root: "." }, working);
       const currentDir = this.fs.cwd();
-      emMod["FS"]["chdir"](working + (currentDir ? `/~/${currentDir}` : ""));
+      for (const comp of currentDir.split("/")) {
+        if (comp) {
+          working += "/~/~";
+        }
+      }
+      emMod["FS"]["chdir"](working);
 
       exitCode = emMod["callMain"](msg.args);
       if (nodeShim.createdWorker) {

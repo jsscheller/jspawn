@@ -563,7 +563,11 @@ impl Dir {
         }
     }
 
-    fn resolve_path(&self, path: &str) -> Result<String> {
+    fn resolve_path(&self, mut path: &str) -> Result<String> {
+        // Hack to get Emscripten absolute/relative paths to "work".
+        while path.starts_with("~/~/") {
+            path = &path[4..];
+        }
         let current_dir = CURRENT_DIR.read();
         let iter = if !path.starts_with("~") {
             current_dir.as_str()

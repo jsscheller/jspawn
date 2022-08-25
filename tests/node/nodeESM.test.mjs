@@ -85,17 +85,26 @@ describe("node ESM tests", function () {
         "foo"
       );
       await chdir("foo");
-      const output = await subprocess.run("ffmpeg", [
-        "-i",
-        "sample.mp4",
-        "-threads",
-        "1",
-        "out.mp3",
-      ]);
-      expect(output.exitCode).to.equal(0);
-
-      const outMP3 = await fs.readFile("~/foo/out.mp3");
-      expect(outMP3.length).to.not.equal(0);
+      {
+        const output = await subprocess.run("ffmpeg", [
+          "-i",
+          "~/foo/sample.mp4",
+          "-threads",
+          "1",
+          "../foo/out0.mp3",
+        ]);
+        expect(output.exitCode).to.equal(0);
+      }
+      {
+        const output = await subprocess.run("ffmpeg", [
+          "-i",
+          "~/foo/sample.mp4",
+          "-threads",
+          "1",
+          "out1.mp3",
+        ]);
+        expect(output.exitCode).to.equal(0);
+      }
     });
   }
 });
