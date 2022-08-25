@@ -8,6 +8,8 @@ A subprocess API for WebAssembly programs.
 
 Compiling and interfacing with WebAssembly programs can be hard. `jspawn` provides a unified interface and a collection of pre-built binaries.
 
+**WARNING:** expect breaking/backwards-incompatible changes for MINOR versions before `v1.0.0`.
+
 ```sh
 npm install --save @jspawn/jspawn
 ```
