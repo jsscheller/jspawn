@@ -2,7 +2,7 @@ import { Context } from "./context";
 import * as t from "./types";
 import * as e from "./errno";
 import * as c from "./constants";
-import { ExitStatus, isNode } from "../utils";
+import { ExitStatus, isNode, requir } from "../utils";
 import { Memory } from "../memory";
 
 let NODE_CRYPTO: any;
@@ -385,7 +385,7 @@ export const snapshotPreview1 = {
     const buf = ctx.mem.u8.subarray(bufPtr, bufPtr + bufLen);
     if (isNode()) {
       // @ts-ignore
-      NODE_CRYPTO = NODE_CRYPTO || require("crypto");
+      NODE_CRYPTO = NODE_CRYPTO || requir("crypto");
       buf.set(NODE_CRYPTO["randomBytes"](buf.length));
     } else {
       crypto.getRandomValues(buf);

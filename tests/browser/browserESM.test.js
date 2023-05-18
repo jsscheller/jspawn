@@ -28,7 +28,9 @@ describe("browser ESM tests", function () {
   });
 
   it("resolves the correct path to WASM file", async function () {
-    subprocess.setBinarySearchPath("/base/node_modules/@jspawn/imagecli-wasm/imagecli.wasm");
+    subprocess.setBinarySearchPath(
+      "/base/node_modules/@jspawn/imagecli-wasm/imagecli.wasm"
+    );
     const output = await subprocess.run("imagecli", [
       "-o",
       "blank_wasi_resolved.png",
@@ -44,7 +46,9 @@ describe("browser ESM tests", function () {
   });
 
   it("resolves the correct path to WASM file (Emscripten)", async function () {
-    subprocess.setBinarySearchPath("/base/node_modules/@jspawn/imagemagick-wasm/magick.wasm");
+    subprocess.setBinarySearchPath(
+      "/base/node_modules/@jspawn/imagemagick-wasm/magick.wasm"
+    );
     const output = await subprocess.run("magick", [
       "-size",
       "100x100",
@@ -61,13 +65,10 @@ describe("browser ESM tests", function () {
 
   it("works with Emscripten pthreads", async function () {
     await fs.mount("/base/tests/assets/sample.mp4", "sample.mp4");
-    const output = await subprocess.run("/base/node_modules/@jspawn/ffmpeg-wasm/ffmpeg.wasm", [
-      "-i",
-      "sample.mp4",
-      "-threads",
-      "1",
-      "out.mp3",
-    ]);
+    const output = await subprocess.run(
+      "/base/node_modules/@jspawn/ffmpeg-wasm/ffmpeg.wasm",
+      ["-i", "sample.mp4", "-threads", "1", "out.mp3"]
+    );
     expect(output.exitCode).to.equal(0);
 
     const outMP3 = await fs.readFileToBlob("out.mp3");

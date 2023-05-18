@@ -1,6 +1,6 @@
 import * as wasi from "./wasi/index";
 import { Memory } from "./memory";
-import { isPlainObject, isNode, loadNodeModule } from "./utils";
+import { isPlainObject, isNode, requir, absURL } from "./utils";
 
 const enum FSRequest {
   ReadSync,
@@ -93,16 +93,8 @@ export class FileSystem {
     this.textEncoder = new TextEncoder();
   }
 
-  static async compile(wasmPath: string): Promise<WebAssembly.Module> {
-    if (isNode()) {
-      const nodeFS = await loadNodeModule("fs/promises");
-      const sep = (await loadNodeModule("path"))["sep"];
-      return WebAssembly.compile(
-        await nodeFS.readFile(wasmPath.replace(`file:${sep}${sep}`, ""))
-      );
-    } else {
-      return await WebAssembly.compileStreaming(fetch(wasmPath));
-    }
+  static async compile(wasmBinary: Uint8Array): Promise<WebAssembly.Module> {
+    return WebAssembly.compile(wasmBinary);
   }
 
   static async instantiate(
@@ -446,9 +438,9 @@ export class Bindings {
     this.textEncoder = new TextEncoder();
     if (isNode()) {
       // @ts-ignore
-      this.nodePath = require("path");
+      this.nodePath = requir("path");
       // @ts-ignore
-      this.nodeFS = require("fs");
+      this.nodeFS = requir("fs");
     }
   }
 
@@ -501,11 +493,11 @@ export class Bindings {
           let len: string | number | null = null;
           if (isNodeFile(url)) {
             // @ts-ignore
-            len = require("fs")["statSync"](nodeFilePath(url))["size"];
+            len = requir("fs")["statSync"](nodeFilePath(url))["size"];
           } else if (!url.startsWith("blob:")) {
             // HEAD requests don't work for blob URLs.
             const xhr = new XMLHttpRequest();
-            xhr.open("HEAD", url, false);
+            xhr.open("HEAD", absURL(url), false);
             xhr.send();
             // `getResponseHeader` will log an error in Chromium if the header is not present.
             // The log looks something like: `Refused to get unsafe header`.
@@ -647,10 +639,10 @@ export class Bindings {
     let buf;
     if (isNodeFile(url)) {
       // @ts-ignore
-      buf = require("fs")["readFileSync"](nodeFilePath(url));
+      buf = requir("fs")["readFileSync"](nodeFilePath(url));
     } else {
       const xhr = new XMLHttpRequest();
-      xhr.open("GET", url, false);
+      xhr.open("GET", absURL(url), false);
       xhr.responseType = "arraybuffer";
       xhr.send();
       buf = new Uint8Array(xhr.response);

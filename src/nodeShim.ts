@@ -1,5 +1,5 @@
 import { FileSystem, constants } from "./fileSystem";
-import { unreachable, isNode } from "./utils";
+import { unreachable, isNode, requir, absURL } from "./utils";
 import { createWorkerSync, JSPAWN_PTHREAD } from "./worker";
 
 export class NodeShim {
@@ -96,7 +96,7 @@ export class NodeShim {
     // TODO: test to determine if this is sufficient.
     const path = isNode()
       ? // @ts-ignore
-        require("path")
+        requir("path")
       : {
           ["resolve"]: function (path: string): string {
             return path;
@@ -131,7 +131,7 @@ export class NodeShim {
       ["cpus"]: function (): any[] {
         if (isNode()) {
           // @ts-ignore
-          return require("os").cpus();
+          return requir("os").cpus();
         } else {
           const cpus = [];
           const cpuCount = navigator.hardwareConcurrency || 1;
@@ -172,14 +172,14 @@ export class NodeShim {
     };
 
     if (isNode()) {
-      const nodeCrypto = require("crypto");
+      const nodeCrypto = requir("crypto");
       this.crypto = {
         ["getRandomValues"](buf: Uint8Array) {
           buf.set(nodeCrypto["randomBytes"](buf.length));
           return buf;
         },
       };
-      const parentPort = require("worker_threads")["parentPort"];
+      const parentPort = requir("worker_threads")["parentPort"];
       this.postMessage = parentPort["postMessage"].bind(parentPort);
     } else {
       this.crypto = crypto;
@@ -207,16 +207,17 @@ export class NodeShim {
     let js;
     if (isNode()) {
       // @ts-ignore
-      const nodePath = require("path");
+      const nodePath = requir("path");
       // @ts-ignore
-      js = await require("fs/promises")["readFile"](
+      js = await requir("fs/promises")["readFile"](
         nodePath["isAbsolute"](path)
           ? path
           : nodePath["join"](process["cwd"](), path)
       );
+      js = js.toString();
       this.wasmBuf = wasmBuf;
     } else {
-      js = await (await fetch(path)).text();
+      js = await (await fetch(absURL(path))).text();
     }
     this.jsPath = path;
     return this.evalImpl(js);
@@ -226,10 +227,10 @@ export class NodeShim {
     let js;
     if (isNode()) {
       // @ts-ignore
-      js = require("fs")["readFileSync"](path);
+      js = requir("fs")["readFileSync"](path);
     } else {
       const xhr = new XMLHttpRequest();
-      xhr.open("GET", path, false);
+      xhr.open("GET", absURL(path), false);
       xhr.responseType = "text";
       xhr.send();
       js = xhr.response;
@@ -252,10 +253,10 @@ export class NodeShim {
       ["postMessage"]: this.isPthread ? this.postMessage : null,
       ["Worker"]: this.Worker,
     };
+    const shimKeys = Object.keys(shims).join();
     const func = new Function(
-      `"use strict"; return function(${Object.keys(
-        shims
-      ).join()}) { var exports = {}; ${js} return exports; }`
+      // Set `module` to undefined so `exports` gets populated.
+      `"use strict"; return function(${shimKeys}) { var module = undefined; var exports = {}; ${js} return exports; }`
     )();
     return func.apply(func, Object.values(shims));
   }

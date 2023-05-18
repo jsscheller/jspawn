@@ -1,3 +1,6 @@
+// @ts-ignore
+export const requir = globalThis["require"];
+
 // Allocates a new backing store for the given node so that it can fit at least newSize amount of bytes.
 // May allocate more, to provide automatic geometric increase and amortized linear performance appending writes.
 // Never shrinks the storage.
@@ -85,6 +88,26 @@ export async function loadNodeModule(name: string): Promise<any> {
     return await import(name);
   } catch (_) {
     // @ts-ignore
-    return require(name);
+    return requir(name);
   }
+}
+
+export function absURL(url: string): string {
+  // relative URLs don't work in BLOB workers
+  if (!isNode() && isRelativeURL(url)) {
+    // @ts-ignore
+    const origin = globalThis["ORIGIN"] || location.origin;
+    const slash = url.startsWith("/") ? "" : "/";
+    url = origin + slash + url;
+  }
+  return url;
+}
+
+function isRelativeURL(url: string): boolean {
+  try {
+    new URL(url);
+  } catch (_) {
+    return true;
+  }
+  return false;
 }

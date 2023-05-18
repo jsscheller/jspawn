@@ -1,4 +1,4 @@
-const { subprocess, fs } = require("../../dist/umd/jspawn.js");
+const { subprocess, fs } = require("../../dist/cjs/jspawn.js");
 const { expect } = require("chai");
 
 describe("node UMD tests", function () {

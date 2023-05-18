@@ -11,15 +11,15 @@ pub use file_desc::*;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::lazy::SyncLazy;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use wasi::*;
 
 type DirEntriesKey = u32;
 type DirEntries = HashMap<DirEntriesKey, Vec<DirEntry>>;
 type Result<T> = std::result::Result<T, Errno>;
 
-static DIR_ENTRIES: SyncLazy<RwLock<HashMap<DirEntriesKey, Vec<DirEntry>>>> = SyncLazy::new(|| {
+static DIR_ENTRIES: LazyLock<RwLock<HashMap<DirEntriesKey, Vec<DirEntry>>>> = LazyLock::new(|| {
     let mut map = HashMap::new();
     // Root dir
     map.insert(0, Vec::new());
@@ -28,16 +28,16 @@ static DIR_ENTRIES: SyncLazy<RwLock<HashMap<DirEntriesKey, Vec<DirEntry>>>> = Sy
 static NEXT_DIR_ENTRIES_KEY: RwLock<DirEntriesKey> = RwLock::new(1);
 static NEXT_DIR_ENTRY_COOKIE: RwLock<u64> = RwLock::new(0);
 static NEXT_FD: RwLock<Fd> = RwLock::new(0);
-static ROOT_DIR: SyncLazy<Arc<RwLock<File>>> =
-    SyncLazy::new(|| Arc::new(RwLock::new(File::Dir(Dir::new(0, true)))));
-static ROOT_DIR_ENTRY: SyncLazy<DirEntry> = SyncLazy::new(|| DirEntry {
+static ROOT_DIR: LazyLock<Arc<RwLock<File>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(File::Dir(Dir::new(0, true)))));
+static ROOT_DIR_ENTRY: LazyLock<DirEntry> = LazyLock::new(|| DirEntry {
     name: "".into(),
     file: ROOT_DIR.clone(),
     filetype: FILETYPE_DIRECTORY,
     entries: Some(0),
     cookie: 0,
 });
-static FD_TABLE: SyncLazy<RwLock<FDTable>> = SyncLazy::new(|| RwLock::new(FDTable::init()));
+static FD_TABLE: LazyLock<RwLock<FDTable>> = LazyLock::new(|| RwLock::new(FDTable::init()));
 static CURRENT_DIR: RwLock<String> = RwLock::new(String::new());
 
 fn next_fd() -> Fd {

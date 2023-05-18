@@ -2,9 +2,9 @@
   "name": "@jspawn/jspawn",
   "version": "0.4.0",
   "description": "a subprocess API for WebAssembly programs",
-  "main": "umd/jspawn.js",
+  "main": "cjs/jspawn.js",
   "module": "esm/jspawn.mjs",
-  "types": "umd/jspawn.d.ts",
+  "types": "types/jspawn.d.ts",
   "scripts": {
     "test:browser": "./node_modules/karma/bin/karma start",
     "test:node": "./node_modules/mocha/bin/mocha.js tests/node --node-option no-wasm-tier-up",
@@ -17,15 +17,12 @@
     "@jspawn/imagemagick-wasm": "^0.1.1",
     "@jspawn/ffmpeg-wasm": "^0.0.1",
     "chai": "^4.3.6",
+    "esbuild": "^0.17.19",
     "karma": "^6.3.20",
     "karma-chai": "^0.1.0",
     "karma-chrome-launcher": "^3.1.1",
     "karma-mocha": "^2.0.1",
     "mocha": "^10.0.0",
-    "rimraf": "3.0.2",
-    "rollup": "^2.74.1",
-    "rollup-plugin-terser": "^7.0.2",
-    "rollup-plugin-typescript2": "^0.31.0",
     "typescript": "^4.3.5"
   }
 }

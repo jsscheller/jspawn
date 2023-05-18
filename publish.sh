@@ -1,9 +1,6 @@
 #!/bin/bash
 set -eo pipefail
 
-find dist/esm -type f -name '*.d.ts' -delete
-find dist/iife -type f -name '*.d.ts' -delete
-
 cp package.json dist/
 cp README.md dist/
 cp LICENSE-MIT dist/

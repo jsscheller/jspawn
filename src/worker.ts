@@ -1,5 +1,7 @@
-import { isNode, Deferred, loadNodeModule } from "./utils";
+import { isNode, Deferred, loadNodeModule, requir } from "./utils";
 import { FileSystem } from "./fileSystem";
+import workerThreadRaw from "worker:./workerThread.ts";
+import wasmBinary from "../dist/fs.wasm";
 
 export const JSPAWN_WORKER_THREAD = "jspawnWorkerThread";
 export const JSPAWN_PTHREAD = "jspawnPthread";
@@ -64,23 +66,6 @@ type WorkerState = {
   idle?: boolean;
 };
 
-let WORKER_PATH!: string;
-// UMD/nodejs note:
-// Normally accessing `import.meta` doesn't work in non-modules.
-// However, it gets replaced with an equivalent value in the build step when targeting non-ESM.
-// We need the try-catch for IIFE.
-try {
-  // @ts-ignore
-  WORKER_PATH = import.meta.url;
-} catch (_) {
-  if (globalThis.document) {
-    // @ts-ignore
-    WORKER_PATH = document.currentScript!.src;
-  } else {
-    WORKER_PATH = location.href;
-  }
-}
-
 class WorkerPool {
   queue: Deferred<WorkerExt>[];
   workers: WorkerState[];
@@ -119,17 +104,8 @@ class WorkerPool {
   }
 
   async newWorker(): Promise<WorkerExt> {
-    let sep = "/";
-    if (isNode()) {
-      sep = (await loadNodeModule("path"))["sep"];
-    }
-
     if (!this.fsModule) {
-      const wasmPath = `${WORKER_PATH.split(sep)
-        .slice(0, -2)
-        .join(sep)}${sep}fs.wasm`;
-
-      this.fsModule = await FileSystem.compile(wasmPath);
+      this.fsModule = await FileSystem.compile(wasmBinary);
       this.fsMemory = new WebAssembly.Memory({
         initial: 80,
         maximum: 16384,
@@ -137,7 +113,7 @@ class WorkerPool {
       });
     }
 
-    const worker = await createWorker(JSPAWN_WORKER_THREAD, sep);
+    const worker = await createWorker(JSPAWN_WORKER_THREAD);
     const workerExt = new WorkerExt(worker);
     workerExt.channel.send({
       type: MessageType.WorkerInit,
@@ -163,81 +139,73 @@ class WorkerPool {
   }
 }
 
-// Defined in `rollup.config.js`
-declare const IS_MOD: boolean;
-
-async function createWorker(id: string, sep: string): Promise<Worker> {
-  let path = WORKER_PATH;
-  if (
-    !isNode() &&
-    /^http:|https:/.test(WORKER_PATH) &&
-    !WORKER_PATH.startsWith(location.origin)
-  ) {
-    // Support cross-origin loading.
-    const blob = await (await fetch(WORKER_PATH)).blob();
-    path = URL.createObjectURL(blob);
-  }
-
+async function createWorker(id: string): Promise<Worker> {
   if (isNode()) {
     const worker_threads = await loadNodeModule("worker_threads");
-    return createNodeWorker(id, "1", path, sep, worker_threads);
+    return createNodeWorker(id, "1", worker_threads);
   } else {
-    return createWebWorker(id, "1", path);
+    return createWebWorker(id, "1");
   }
 }
 
 export function createWorkerSync(id: string, data: string): Worker {
-  let path = WORKER_PATH;
-  if (
-    !isNode() &&
-    /^http:|https:/.test(WORKER_PATH) &&
-    !WORKER_PATH.startsWith(location.origin)
-  ) {
-    // Support cross-origin loading.
-    const xhr = new XMLHttpRequest();
-    xhr.open("GET", WORKER_PATH, false);
-    xhr.responseType = "blob";
-    xhr.send();
-    path = URL.createObjectURL(xhr.response);
-  }
-
   if (isNode()) {
     // @ts-ignore
-    const worker_threads = require("worker_threads");
-    // @ts-ignore
-    const sep = require("path")["sep"];
-    return createNodeWorker(id, data, path, sep, worker_threads);
+    const worker_threads = requir("worker_threads");
+    return createNodeWorker(id, data, worker_threads);
   } else {
-    return createWebWorker(id, data, path);
+    return createWebWorker(id, data);
   }
 }
 
 function createNodeWorker(
   id: string,
   data: string,
-  path: string,
-  sep: string,
   worker_threads: any
 ): Worker {
-  path =
-    path.replace(`file:${sep}${sep}`, "").split(sep).slice(0, -2).join(sep) +
-    `${sep}umd${sep}workerThread.cjs`;
-  return new NodeWorker(
-    new worker_threads["Worker"](path, {
-      ["workerData"]: { [id]: data },
-    })
-  ) as unknown as Worker;
+  const worker = new worker_threads["Worker"](getWorkerJS(id, data), {
+    ["eval"]: true,
+  });
+  return new NodeWorker(worker) as unknown as Worker;
 }
 
-function createWebWorker(id: string, data: any, path: string): Worker {
-  const worker = new Worker(
-    `${path}${path.includes("?") ? "&" : "?"}${id}=${data}`,
-    IS_MOD ? { type: "module" } : {}
-  );
-  if (path !== WORKER_PATH) {
-    URL.revokeObjectURL(path);
+function createWebWorker(id: string, data: any): Worker {
+  // @ts-ignore
+  let url = globalThis["WORKER_URL"];
+  if (url) {
+    if (url.includes("?")) {
+      url += "&";
+    } else {
+      url += "?";
+    }
+    url += `${id}=${data}`;
+    return new Worker(url);
   }
+  const blob = new Blob([getWorkerJS(id, data)], {
+    type: "application/javascript",
+  });
+  url = URL.createObjectURL(blob);
+  const worker = new Worker(url);
+  URL.revokeObjectURL(url);
   return worker;
+}
+
+function getWorkerJS(id: string, data: string): string {
+  // @ts-ignore
+  const js = workerThreadRaw || globalThis["WORKER_THREAD_RAW"];
+  let header =
+    `globalThis.WORKER_DATA = ${JSON.stringify({ [id]: data })};\n` +
+    `globalThis.WORKER_THREAD_RAW = ${JSON.stringify(js)};\n`;
+  if (!isNode()) {
+    // @ts-ignore
+    const origin = globalThis["ORIGIN"] || location.origin;
+    header += `globalThis.ORIGIN = ${JSON.stringify(origin)};\n`;
+
+    // @ts-ignore
+    const url = globalThis["WORKER_URL"];
+    if (url) header += `globalThis.WORKER_URL = ${JSON.stringify(url)};\n`;
+  }
+  return header + js;
 }
 
 class NodeWorker {
@@ -452,7 +420,7 @@ export class FromWorkerChannel {
   postMessage(msg: any) {
     if (isNode()) {
       // @ts-ignore
-      require("worker_threads")["parentPort"]["postMessage"](msg);
+      requir("worker_threads")["parentPort"]["postMessage"](msg);
     } else {
       // @ts-ignore
       postMessage(msg);

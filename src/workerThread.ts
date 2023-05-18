@@ -10,7 +10,7 @@ import {
   JSPAWN_WORKER_THREAD,
   JSPAWN_PTHREAD,
 } from "./worker";
-import { resizeBuffer, isNode, Deferred } from "./utils";
+import { resizeBuffer, isNode, Deferred, requir, absURL } from "./utils";
 import { FileSystem } from "./fileSystem";
 import * as wasi from "./wasi/index";
 
@@ -22,9 +22,9 @@ function main() {
     const onMessage = thread.onMessage.bind(thread);
     if (isNode()) {
       // @ts-ignore
-      globalThis.Blob = require("buffer")["Blob"];
+      globalThis.Blob = requir("buffer")["Blob"];
       // @ts-ignore
-      require("worker_threads")["parentPort"]["on"]("message", onMessage);
+      requir("worker_threads")["parentPort"]["on"]("message", onMessage);
     } else {
       self.onmessage = onMessage;
     }
@@ -73,11 +73,28 @@ class WorkerThread {
   async handleMessage(msg: ToWorkerMessage) {
     switch (msg.msg.type) {
       case MessageType.SubprocessRun:
-        await this.subprocessRun(msg.msg);
+        await this.trySubprocessRun(msg.msg);
         break;
       case MessageType.FSRequest:
         await this.fsReqeust(msg.req!, msg.msg);
         break;
+    }
+  }
+
+  async trySubprocessRun(msg: SubprocessRun) {
+    try {
+      await this.subprocessRun(msg);
+    } catch (err) {
+      console.error(err);
+      const message = (err as any).message || "unknown";
+      this.channel.pub(
+        msg.topic,
+        {
+          type: MessageType.SubprocessRunError,
+          message: `failed to run subprocess: ${message}`,
+        },
+        true
+      );
     }
   }
 
@@ -97,11 +114,11 @@ class WorkerThread {
     let wasmBuf;
     if (isNode()) {
       // @ts-ignore
-      wasmBuf = await require("fs/promises")["readFile"](binaryPath!);
+      wasmBuf = await requir("fs/promises")["readFile"](binaryPath!);
       // @ts-ignore
       mod = await WebAssembly.compile(wasmBuf);
     } else {
-      const src = await fetch(binaryPath);
+      const src = await fetch(absURL(binaryPath));
       if (WebAssembly.compileStreaming) {
         mod = await WebAssembly.compileStreaming(src);
       } else {
@@ -264,7 +281,7 @@ class WorkerThread {
       let readdir;
       if (isNode()) {
         // @ts-ignore
-        const fs = require("fs");
+        const fs = requir("fs");
         readdir = fs["readdirSync"];
       } else {
         readdir = this.fs.readdirSync.bind(this.fs);
@@ -350,7 +367,7 @@ function pathSep(): string {
   let sep = "/";
   if (isNode()) {
     // @ts-ignore
-    sep = require("path")["sep"];
+    sep = requir("path")["sep"];
   }
   return sep;
 }
@@ -421,17 +438,15 @@ class Pthread {
 }
 
 function getWorkerData(key: string): any {
-  if (isNode()) {
-    try {
-      // @ts-ignore
-      const data = require("worker_threads")["workerData"];
-      return data && data[key];
-    } catch (_) {
-      return undefined;
+  try {
+    // @ts-ignore
+    return globalThis["WORKER_DATA"][key];
+  } catch (_) {
+    if (!isNode()) {
+      return new URL(location.href).searchParams.get(key);
     }
-  } else {
-    return new URL(location.href).searchParams.get(key);
   }
+  return undefined;
 }
 
 main();
