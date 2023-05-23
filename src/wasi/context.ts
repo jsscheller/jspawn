@@ -1,10 +1,10 @@
 import { Memory } from "../memory";
-import { FileSystem } from "../fileSystem";
+import { WasiFS } from "../wasiFS";
 import { ExitStatus } from "../utils";
 import * as t from "./types";
 
 export class Context {
-  fs!: FileSystem;
+  fs!: WasiFS;
   mem!: Memory;
   envs!: string[];
   args!: string[];

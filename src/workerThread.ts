@@ -11,7 +11,7 @@ import {
   JSPAWN_PTHREAD,
 } from "./worker";
 import { resizeBuffer, isNode, Deferred, requir, absURL } from "./utils";
-import { FileSystem } from "./fileSystem";
+import { WasiFS } from "./wasiFS";
 import * as wasi from "./wasi/index";
 
 function main() {
@@ -34,20 +34,18 @@ function main() {
 class WorkerThread {
   channel: FromWorkerChannel;
   ctx: wasi.Context;
-  fs!: FileSystem;
+  fs!: WasiFS;
   fsModule!: WebAssembly.Module;
   fsMemory!: WebAssembly.Memory;
   binaryCache: {
     wasmPath?: string[];
     resolutions: { [k: string]: string };
   };
-  queue: ToWorkerMessage[];
 
   constructor() {
     this.channel = new FromWorkerChannel();
     this.ctx = new wasi.Context();
     this.binaryCache = { resolutions: {} };
-    this.queue = [];
   }
 
   async onMessage(e: MessageEvent) {
@@ -55,16 +53,13 @@ class WorkerThread {
     const data = msg.msg;
 
     if (data.type === MessageType.WorkerInit) {
-      const fs = await FileSystem.instantiate(data.fsModule, data.fsMemory);
+      const fs = await WasiFS.instantiate(data.fsModule, data.fsMemory);
       this.ctx.fs = this.fs = fs;
       this.fsModule = data.fsModule;
       this.fsMemory = data.fsMemory;
-
-      for (const msg of this.queue.splice(0, this.queue.length)) {
-        await this.handleMessage(msg);
-      }
-    } else if (!this.fs) {
-      this.queue.push(msg);
+      this.channel.res(msg.req!, {
+        type: MessageType.WorkerInitResponse,
+      });
     } else {
       this.handleMessage(msg);
     }
@@ -412,7 +407,7 @@ class Pthread {
 
     if (Array.isArray(data)) {
       const [fsModule, fsMemory] = data;
-      const fs = await FileSystem.instantiate(fsModule, fsMemory);
+      const fs = await WasiFS.instantiate(fsModule, fsMemory);
       this.nodeShim = new NodeShim(fs.nodeFS(), fsModule, fsMemory, true);
 
       const workerPath = getWorkerData(JSPAWN_PTHREAD) as string;

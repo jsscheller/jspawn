@@ -1,20 +1,30 @@
-import { fs } from "/base/dist/esm/jspawn.mjs";
+import { VirtualEnv } from "/base/dist/esm/jspawn.mjs";
 
 describe("node fs tests", function () {
+  let venv;
+
+  before(async function () {
+    venv = await VirtualEnv.instantiate();
+  });
+
+  after(async function () {
+    venv.terminate();
+  });
+
   it("mkdir/readdir", async function () {
-    await fs.mkdir("foo");
-    const empty = await fs.readdir("foo");
+    await venv.fs.mkdir("foo");
+    const empty = await venv.fs.readdir("foo");
     expect(empty.length).to.equal(0);
 
-    await fs.mkdir("foo/bar");
-    const one = await fs.readdir("foo");
+    await venv.fs.mkdir("foo/bar");
+    const one = await venv.fs.readdir("foo");
     expect(one.length).to.equal(1);
 
-    await fs.rmdir("foo", { recursive: true });
+    await venv.fs.rmdir("foo", { recursive: true });
 
     let err;
     try {
-      await fs.readdir("foo");
+      await venv.fs.readdir("foo");
     } catch (_) {
       err = true;
     }

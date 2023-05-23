@@ -1,82 +1,63 @@
 import { isNode, Deferred, loadNodeModule, requir } from "./utils";
 import { FileSystem } from "./fileSystem";
 import workerThreadRaw from "worker:./workerThread.ts";
-import wasmBinary from "../dist/fs.wasm";
 
 export const JSPAWN_WORKER_THREAD = "jspawnWorkerThread";
 export const JSPAWN_PTHREAD = "jspawnPthread";
 
-export async function subscribe(
-  createMsg: (topic: number) => Message,
-  handler: (msg: Message) => void
-) {
-  const worker = await getWorker();
-
-  const topic = worker.channel.createTopic();
-  worker.channel.send(createMsg(topic));
-  await worker.channel.sub(topic, handler);
-
-  WORKER_POOL!.reclaim(worker);
-
-  if (isNode()) {
-    worker.terminate();
-  }
-}
-
-export async function request<T>(msg: Message, transfers?: any[]): Promise<T> {
-  const worker = await getWorker();
-
-  const ret = await worker.channel.req<T>(msg, transfers);
-
-  WORKER_POOL!.reclaim(worker);
-
-  if (isNode()) {
-    worker.terminate();
-  }
-
-  return ret;
-}
-
-let WORKER_POOL: WorkerPool | undefined;
-
-async function getWorker(): Promise<WorkerExt> {
-  if (!WORKER_POOL) {
-    let maxWorkers;
-    if (isNode()) {
-      maxWorkers = (await loadNodeModule("os"))["cpus"]().length;
-    } else {
-      maxWorkers = navigator.hardwareConcurrency || 2;
-    }
-    WORKER_POOL = new WorkerPool(maxWorkers);
-  }
-  return WORKER_POOL.next();
-}
-
-export function terminateWorkers() {
-  if (WORKER_POOL) {
-    for (const worker of WORKER_POOL!.workers) {
-      worker.worker.terminateSync();
-    }
-  }
-  WORKER_POOL = undefined;
-}
-
 type WorkerState = {
   worker: WorkerExt;
+  fs?: FileSystem;
   idle?: boolean;
 };
 
-class WorkerPool {
+export class WorkerPool {
+  fs!: FileSystem;
   queue: Deferred<WorkerExt>[];
   workers: WorkerState[];
   maxWorkers: number;
-  fsModule?: WebAssembly.Module;
-  fsMemory?: WebAssembly.Memory;
 
   constructor(maxWorkers: number) {
+    this.maxWorkers = maxWorkers;
     this.queue = [];
     this.workers = [];
-    this.maxWorkers = maxWorkers;
+  }
+
+  async subscribe(
+    createMsg: (topic: number) => Message,
+    handler: (msg: Message) => void
+  ) {
+    const worker = await this.next();
+
+    const topic = worker.channel.createTopic();
+    worker.channel.send(createMsg(topic));
+    await worker.channel.sub(topic, handler);
+
+    this.reclaim(worker);
+
+    if (isNode()) {
+      worker.terminate(this);
+    }
+  }
+
+  async request<T>(msg: Message, transfers?: any[]): Promise<T> {
+    const worker = await this.next();
+
+    const ret = await worker.channel.req<T>(msg, transfers);
+
+    this.reclaim(worker);
+
+    if (isNode()) {
+      worker.terminate(this);
+    }
+
+    return ret;
+  }
+
+  terminate() {
+    for (const worker of this.workers) {
+      worker.worker.terminateSync(this);
+    }
   }
 
   next(): Promise<WorkerExt> {
@@ -104,23 +85,13 @@ class WorkerPool {
   }
 
   async newWorker(): Promise<WorkerExt> {
-    if (!this.fsModule) {
-      this.fsModule = await FileSystem.compile(wasmBinary);
-      this.fsMemory = new WebAssembly.Memory({
-        initial: 80,
-        maximum: 16384,
-        shared: true,
-      });
-    }
-
     const worker = await createWorker(JSPAWN_WORKER_THREAD);
     const workerExt = new WorkerExt(worker);
-    workerExt.channel.send({
+    await workerExt.channel.req({
       type: MessageType.WorkerInit,
-      fsModule: this.fsModule!,
-      fsMemory: this.fsMemory!,
+      fsModule: this.fs.mod,
+      fsMemory: this.fs.mem,
     });
-
     return workerExt;
   }
 
@@ -242,22 +213,23 @@ class WorkerExt {
     this.channel = new ToWorkerChannel(worker);
   }
 
-  terminate() {
+  terminate(pool: WorkerPool) {
     clearTimeout(this.terminateTimeout);
     this.terminateTimeout = setTimeout(() => {
-      this.terminateSync();
+      this.terminateSync(pool);
     }) as unknown as number;
   }
 
-  terminateSync() {
+  terminateSync(pool: WorkerPool) {
     clearTimeout(this.terminateTimeout);
-    WORKER_POOL!.remove(this);
+    pool.remove(this);
     this.channel.worker.terminate();
   }
 }
 
 export type Message =
   | WorkerInit
+  | WorkerInitResponse
   | SubprocessRun
   | SubprocessRunStdout
   | SubprocessRunStderr
@@ -268,6 +240,7 @@ export type Message =
 
 export const enum MessageType {
   WorkerInit,
+  WorkerInitResponse,
   SubprocessRun,
   SubprocessRunStdout,
   SubprocessRunStderr,
@@ -281,6 +254,10 @@ export type WorkerInit = {
   type: MessageType.WorkerInit;
   fsModule: WebAssembly.Module;
   fsMemory: WebAssembly.Memory;
+};
+
+export type WorkerInitResponse = {
+  type: MessageType.WorkerInitResponse;
 };
 
 export type SubprocessRun = {

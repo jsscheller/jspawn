@@ -21,12 +21,14 @@ npm install --save @jspawn/jspawn
 **index.mjs**
 
 ```javascript
-// Or `const { subprocess } = require("@jspawn/jspawn");`
-import { subprocess } from "@jspawn/jspawn";
+// Or `const { VirtualEnv } = require("@jspawn/jspawn");`
+import { VirtualEnv } from "@jspawn/jspawn";
+
+const venv = await VirtualEnv.instantiate();
 
 // WASM/binary resolution happens automatically in node when the first argument isn't a path -
 // more specifically, it doesn't contain a path-separator and doesn't end with `.wasm`.
-const output = await subprocess.run(
+const output = await venv.run(
   // Assumes `@jspawn/imagemagick-wasm` is installed.
   // `npm install --save @jspawn/imagemagick-wasm`
   "magick",
@@ -46,9 +48,11 @@ node --experimental-wasm-bigint --experimental-wasi-unstable-preview1 index.mjs
 ### Browser
 
 ```javascript
-import { subprocess, fs } from "https://unpkg.com/@jspawn/jspawn/esm/jspawn.mjs";
+import { VirtualEnv } from "https://unpkg.com/@jspawn/jspawn/esm/jspawn.mjs";
 
-const output = await subprocess.run(
+const venv = await VirtualEnv.instantiate();
+
+const output = await venv.run(
   // Full path to a WASM file - no automatic resolution in the browser.
   "https://unpkg.com/@jspawn/imagemagick-wasm/magick.wasm",
   // Create a blank PNG.
@@ -59,7 +63,7 @@ console.log(output); // { exitCode: 0, stdout: "", stderr: "" }
 
 // The file system lives in memory for browser environments.
 // Access it using the `fs` module.
-const png = await fs.readFileToBlob("blank.png");
+const png = await venv.fs.readFileToBlob("blank.png");
 
 // Now, do what you will with the `Blob`.
 // Maybe display it.

@@ -116,7 +116,7 @@ const workerPlugin = (workerJS) => {
     setup(build) {
       build.onResolve({ filter: /^worker:/ }, (args) => {
         return {
-          path: path.join(args.resolveDir, args.path.split(":").pop()),
+          path: args.path.split(":").pop(),
           namespace: "worker",
         };
       });

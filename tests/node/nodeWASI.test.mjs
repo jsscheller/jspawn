@@ -1,4 +1,4 @@
-import { fs, subprocess } from "../../dist/esm/jspawn.mjs";
+import { VirtualEnv } from "../../dist/esm/jspawn.mjs";
 import { expect } from "chai";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -24,6 +24,8 @@ describe("node wasi tests", function () {
 });
 
 async function runTest(name) {
+  const venv = await VirtualEnv.instantiate();
+
   const outDir = path.join(__dirname, "../out");
   await nodeFS.mkdir(outDir, { recursive: true });
   const testPath = path.join(__dirname, "../wasi", name);
@@ -59,15 +61,16 @@ async function runTest(name) {
     });
   });
 
-  await fs.clear();
   if (init.fs) {
-    await fs.mount(init.fs, ".");
+    await venv.fs.mount(".", init.fs);
   }
 
-  const output = await subprocess.run(outPath, init.args || [], {
+  const output = await venv.run(outPath, init.args || [], {
     env: init.env,
   });
   expect(output.exitCode).to.equal(0);
+
+  venv.terminate();
 }
 
 function parseInit(s) {

@@ -1,4 +1,4 @@
-import { FileSystem, constants } from "./fileSystem";
+import { WasiFS, constants } from "./wasiFS";
 import { unreachable, isNode, requir, absURL } from "./utils";
 import { createWorkerSync, JSPAWN_PTHREAD } from "./worker";
 
@@ -20,7 +20,7 @@ export class NodeShim {
   exitCode?: number;
 
   constructor(
-    fs: FileSystem,
+    fs: WasiFS,
     fsModule: WebAssembly.Module,
     fsMemory: WebAssembly.Memory,
     isPthread?: boolean
